@@ -1621,7 +1621,7 @@ async function guardarGasto(otro, forzar) {
   else cerrarSheet();
   render();
 }
-function cerrarSheet() { $('#sheet').innerHTML = ''; editando = null; fotoTmp = undefined; }
+function cerrarSheet() { $('#sheet').innerHTML = ''; editando = null; fotoTmp = undefined; if (!iaLista() || !IA.propia) setTimeout(() => ofrecerClaveIA(), 900); }
 
 /* ---------- Firma para la legalización (casilla "Solicitado por") ---------- */
 // Recorta lo transparente o blanco y devuelve PNG (máx. 600 x 240)
@@ -2846,7 +2846,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '47 (26/11/2026)';
+const APP_VERSION = '48 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
@@ -3460,6 +3460,10 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#sheet'
   $('#fab').innerHTML = ICON.plus + '<span>Registrar gasto</span>';
   try { if (location.hash && TABS.some(t => t[0] === location.hash.slice(1))) tab = location.hash.slice(1); } catch {}
   render();
+  // Guía de la clave de IA: no depende de que la sincronización termine (puede quedar esperando un toque)
+  const revisarIA = () => { if ((!iaLista() || !IA.propia) && !syncCorriendo) ofrecerClaveIA(); };
+  setTimeout(revisarIA, 6000); setInterval(revisarIA, 60000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') setTimeout(revisarIA, 2500); });
   limpiarEjemplo().then(c => { if (c) render(); }).catch(() => {}).then(() => metaSync()).then(() => sellar()).then(() => programarSync(1200)).catch(e => console.error(e));
   window.addEventListener('online', () => programarSync(500));
   window.addEventListener('offline', () => { if (syncActivo()) { syncEstado = { ...syncEstado, estado: 'offline' }; pintarSyncChip(); } });
