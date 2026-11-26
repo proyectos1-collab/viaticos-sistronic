@@ -2206,6 +2206,13 @@ async function exportarExcel(soloGenerar, vx) {
   h1.set('C2', v.trabajador); h1.set('C3', v.cedula); h1.set('C4', v.cliente); h1.set('C5', v.servicio);
   h1.set('C6', v.cot); h1.set('C7', v.os); h1.set('C8', v.ciudad);
   h1.set('I2', serial(v.inicio)); h1.set('I3', serial(v.fin)); h1.set('I4', Number(v.anticipo) || 0);
+  { // Anticipos por destino (del proyecto; en un corte el total de I4 es el anticipo del corte)
+    const ta = totalesAnticipo(S.viajes.find(x => x.id === v.id) || v), pr = v._corte || v._final ? ' (proyecto)' : '';
+    h1.set('H4', v._corte || v._final ? 'Anticipo de este corte:' : 'Total anticipos:', false, 3);
+    h1.set('H6', pr ? 'Cuenta (proyecto):' : 'Cuenta empleado:', false, 3); h1.set('I6', ta.empleado, false, 189); h1.set('J6', '', false, 187);
+    h1.set('H7', pr ? 'Tarjeta (proyecto):' : 'Tarjeta ingeniería:', false, 3); h1.set('I7', ta.tarjeta, false, 189); h1.set('J7', '', false, 187);
+    if (pr) { h1.set('H8', 'Total (proyecto):', false, 3); h1.set('I8', ta.total, false, 189); h1.set('J8', '', false, 187); }
+  }
   const gs = [...v.gastos].sort((a, b) => (a.fecha || '').localeCompare(b.fecha || '')).slice(0, FILAS);
   let acc = 0;
   for (let i = 0; i < FILAS; i++) {
@@ -2308,9 +2315,11 @@ async function exportarExcel(soloGenerar, vx) {
   });
   zip.file(p5, h5.xml());
 
-  // Hoja adicional con las fotos de las facturas
-  const nFotos = await agregarHojaSoportes(zip, gs, v);
-  await agregarHojaDetalle(zip, gs);
+  // Las fotos de las facturas ya van en el PDF de facturas: el Excel no lleva hoja de soportes.
+  // Detalle de facturas en dos hojas: facturadas a Sistronic y a nombre de terceros
+  const filasDet = gs.map((g, k) => ({ g, fila: 14 + k, a: compradorDe(g) }));
+  await agregarHojaDetalle(zip, filasDet.filter(x => x.a === 'sistronic'), 'sheetDetalle', 'rIdDetalle', false);
+  await agregarHojaDetalle(zip, filasDet.filter(x => x.a !== 'sistronic'), 'sheetDetalle2', 'rIdDetalle2', true);
   const conOS = esServ(v); if (conOS) await agregarHojaOS(zip, v);
   await agregarHojaTerceros(zip, gs);
 
@@ -2319,7 +2328,7 @@ async function exportarExcel(soloGenerar, vx) {
   let wb = await zip.file(pw).async('string');
   const conResumen = cortesDe(v0).length && !v._corte;
   if (conResumen) await agregarHojaCortes(zip, v0);
-  wb = wb.replace('</sheets>', `<sheet name="Soportes" sheetId="6" r:id="rIdSoportes"/><sheet name="Detalle de facturas" sheetId="8" r:id="rIdDetalle"/><sheet name="Terceros Siigo" sheetId="7" r:id="rIdTerceros"/>${conOS ? '<sheet name="Resumen por OS" sheetId="10" r:id="rIdOS"/>' : ''}${conResumen ? '<sheet name="Resumen de cortes" sheetId="9" r:id="rIdCortes"/>' : ''}</sheets>`);
+  wb = wb.replace('</sheets>', `<sheet name="Facturas a Sistronic" sheetId="8" r:id="rIdDetalle"/><sheet name="Facturas a terceros" sheetId="11" r:id="rIdDetalle2"/><sheet name="Terceros Siigo" sheetId="7" r:id="rIdTerceros"/>${conOS ? '<sheet name="Resumen por OS" sheetId="10" r:id="rIdOS"/>' : ''}${conResumen ? '<sheet name="Resumen de cortes" sheetId="9" r:id="rIdCortes"/>' : ''}</sheets>`);
   wb = wb.replace(/<calcPr([^>]*?)\/>/, (m, a) => '<calcPr' + a.replace(/\s*fullCalcOnLoad="[^"]*"/, '') + (SOLO_VALORES ? '' : ' fullCalcOnLoad="1"') + '/>');
   zip.file(pw, wb);
   if (SOLO_VALORES) {
@@ -3240,7 +3249,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '55 (26/11/2026)';
+const APP_VERSION = '56 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
@@ -3616,24 +3625,33 @@ async function agregarHojaOS(zip, v) {
   const wrels = await zip.file('xl/_rels/workbook.xml.rels').async('string');
   zip.file('xl/_rels/workbook.xml.rels', wrels.replace('</Relationships>', '<Relationship Id="rIdOS" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheetOS.xml"/></Relationships>'));
 }
-async function agregarHojaDetalle(zip, gs) {
-  const cols = [['Fila en Control de Gastos', 12], ['Fecha', 12], ['Hora', 8], ['Tipo de documento', 22], ['N° factura', 16], ['CUFE', 30], ['Proveedor', 24], ['Razón social', 30], ['NIT', 13], ['DV', 5], ['Facturada a', 22], ['NIT comprador', 14], ['Concepto', 14], ['Subconcepto', 20], ['Descripción', 26], ['Subtotal', 13], ['IVA %', 7], ['IVA', 12], ['INC %', 7], ['INC', 12], ['Propina', 11], ['Descuentos', 11], ['Total', 13], ['¿Cuadra?', 9], ['Forma de pago', 12], ['Medio de pago', 15], ['Pagado por', 11], ['Soporte', 9], ['Estado', 22], ['Observaciones', 30]];
+// ¿A nombre de quién está la factura? sistronic · tercero · sin (sin dato del comprador)
+function compradorDe(g) {
+  const emp = soloDig((S.empresa || {}).nit), cn = soloDig(g.compradorNit), nom = String(g.compradorNombre || '').toLowerCase();
+  if (!cn && !nom.trim()) return 'sin';
+  if ((emp && cn && cn.slice(0, emp.length) === emp) || /sistronic|sistemas\s*electr[oó]nicos/.test(nom)) return 'sistronic';
+  return 'tercero';
+}
+const aNombreDe = g => { const a = compradorDe(g), nom = String(g.compradorNombre || '').trim(); return a === 'sin' ? 'Sin dato del comprador' : /consumidor\s*final/i.test(nom) || /^2{6,}$/.test(soloDig(g.compradorNit)) ? 'Consumidor final' : nom || 'NIT ' + g.compradorNit; };
+async function agregarHojaDetalle(zip, filas, archivo, rid, terceros) {
+  const cols = [['Fila en Control de Gastos', 12], ...(terceros ? [['A nombre de', 24]] : []), ['Fecha', 12], ['Hora', 8], ['Tipo de documento', 22], ['N° factura', 16], ['CUFE', 30], ['Proveedor', 24], ['Razón social', 30], ['NIT', 13], ['DV', 5], ['Facturada a', 22], ['NIT comprador', 14], ['Concepto', 14], ['Subconcepto', 20], ['Descripción', 26], ['Subtotal', 13], ['IVA %', 7], ['IVA', 12], ['INC %', 7], ['INC', 12], ['Propina', 11], ['Descuentos', 11], ['Total', 13], ['¿Cuadra?', 9], ['Forma de pago', 12], ['Medio de pago', 15], ['Pagado por', 11], ['Soporte', 9], ['Estado', 22], ['Observaciones', 30]];
   const c = (ref, st, v) => v === '' || v == null ? `<c r="${ref}" s="${st}"/>` : typeof v === 'number' ? `<c r="${ref}" s="${st}"><v>${v}</v></c>` : `<c r="${ref}" s="${st}" t="inlineStr"><is><t xml:space="preserve">${xesc(v)}</t></is></c>`;
-  const MONEY = new Set([15, 17, 19, 20, 21, 22]);
+  const sh = terceros ? 1 : 0, MONEY = new Set([15, 17, 19, 20, 21, 22].map(i => i + sh));
   let rows = `<row r="1" ht="32" customHeight="1">${cols.map(([h], i) => c(colLetra(i) + '1', 23, h)).join('')}</row>`;
-  gs.forEach((g, k) => {
+  if (!filas.length) rows += `<row r="2">${c('A2', 171, terceros ? 'No hay facturas a nombre de terceros.' : 'No hay facturas a nombre de Sistronic.')}</row>`;
+  filas.forEach(({ g, fila }, k) => {
     const r = k + 2, cq = cuadreFactura(g), num = x => x === '' || x == null ? '' : Number(x);
-    const vals = [14 + k, serial(g.fecha), g.hora || '', g.tipoDoc || '', g.factura || '', g.cufe || '', g.proveedor || '', g.razon || '', g.nit ? Number(g.nit) : '', g.nit ? Number(dvNIT(g.nit)) : '', g.compradorNombre || '', g.compradorNit || '', g.concepto || '', g.sub || '', g.desc || '',
+    const vals = [fila, ...(terceros ? [aNombreDe(g)] : []), serial(g.fecha), g.hora || '', g.tipoDoc || '', g.factura || '', g.cufe || '', g.proveedor || '', g.razon || '', g.nit ? Number(g.nit) : '', g.nit ? Number(dvNIT(g.nit)) : '', g.compradorNombre || '', g.compradorNit || '', g.concepto || '', g.sub || '', g.desc || '',
       num(g.subtotal), num(g.ivaPct), num(g.iva), num(g.incPct), num(g.inc), num(g.propina), num(g.descuento), num(g.valor), cq ? (cq.ok ? 'Sí' : 'No') : '', g.formaPago || '', g.medioPago || '', g.pagadoPor || '', g.soporte || '', estado(g), g.obs || ''];
-    rows += `<row r="${r}">${vals.map((v, i) => c(colLetra(i) + r, i === 1 ? 170 : MONEY.has(i) ? 172 : 171, v)).join('')}</row>`;
+    rows += `<row r="${r}">${vals.map((v, i) => c(colLetra(i) + r, i === 1 + sh ? 170 : MONEY.has(i) ? 172 : 171, v)).join('')}</row>`;
   });
   const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="${NS_MAIN}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetPr><tabColor rgb="FF082759"/></sheetPr><sheetViews><sheetView workbookViewId="0"><pane xSplit="1" ySplit="1" topLeftCell="B2" activePane="bottomRight" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="15"/><cols>${cols.map(([, w], i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols><sheetData>${rows}</sheetData>${gs.length ? `<autoFilter ref="A1:${colLetra(cols.length - 1)}${gs.length + 1}"/>` : ''}<pageMargins left="0.5" right="0.5" top="0.6" bottom="0.6" header="0.3" footer="0.3"/></worksheet>`;
-  zip.file('xl/worksheets/sheetDetalle.xml', sheet);
+<worksheet xmlns="${NS_MAIN}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetPr><tabColor rgb="FF082759"/></sheetPr><sheetViews><sheetView workbookViewId="0"><pane xSplit="1" ySplit="1" topLeftCell="B2" activePane="bottomRight" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="15"/><cols>${cols.map(([, w], i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols><sheetData>${rows}</sheetData>${filas.length ? `<autoFilter ref="A1:${colLetra(cols.length - 1)}${filas.length + 1}"/>` : ''}<pageMargins left="0.5" right="0.5" top="0.6" bottom="0.6" header="0.3" footer="0.3"/></worksheet>`;
+  zip.file(`xl/worksheets/${archivo}.xml`, terceros ? sheet.replace('<tabColor rgb="FF082759"/>', '<tabColor rgb="FFE20214"/>') : sheet);
   const types = await zip.file('[Content_Types].xml').async('string');
-  zip.file('[Content_Types].xml', types.replace('</Types>', '<Override PartName="/xl/worksheets/sheetDetalle.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'));
+  zip.file('[Content_Types].xml', types.replace('</Types>', `<Override PartName="/xl/worksheets/${archivo}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`));
   const wrels = await zip.file('xl/_rels/workbook.xml.rels').async('string');
-  zip.file('xl/_rels/workbook.xml.rels', wrels.replace('</Relationships>', '<Relationship Id="rIdDetalle" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheetDetalle.xml"/></Relationships>'));
+  zip.file('xl/_rels/workbook.xml.rels', wrels.replace('</Relationships>', `<Relationship Id="${rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/${archivo}.xml"/></Relationships>`));
 }
 /* Archivo aparte, listo para "Subir Terceros desde Excel\" en Siigo Nube (todos los proveedores con NIT) */
 async function exportarSiigo() {
