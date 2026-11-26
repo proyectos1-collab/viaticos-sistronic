@@ -879,6 +879,8 @@ async function enviarFinalCortes() {
   try {
     const cfg = driveCfg(), sub = carpetaProyecto(v), mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
     const subir = async ({ blob, nombre }) => { const bytes = await zipCrcFix(new Uint8Array(await blob.arrayBuffer())); return { ...(await GW.subir(bytes, nombre, mime, cfg.carpetaId ? cfg.carpetaNombre || 'Carpeta compartida' : cfg.carpeta || 'Viáticos Sistronic', cfg.carpetaId || '', sub)), nombre }; };
+    await subirSoportesPDF(v.gastos, cfg.carpetaId ? cfg.carpetaNombre || 'Carpeta compartida' : cfg.carpeta || 'Viáticos Sistronic', cfg.carpetaId || '', sub, t => { driveUltimo = { estado: 'subiendo', txt: t }; render(); });
+    driveUltimo = { estado: 'subiendo' }; render();
     const archivos = [];
     if (k) { archivos.push(await subir(await exportarExcel(true, vistaCorte(v, k)))); k.revision = { estado: 'enviado', nota: '', fecha: new Date().toISOString() }; }
     marcarRevision(v, 'enviado'); await guardar();
@@ -1479,6 +1481,57 @@ async function guardarGasto(otro, forzar) {
 }
 function cerrarSheet() { $('#sheet').innerHTML = ''; editando = null; fotoTmp = undefined; }
 
+/* ---------- Soportes en PDF (una factura por archivo) ---------- */
+function pdfTexto(t) { let o = ''; for (const ch of String(t)) { const c = ch.charCodeAt(0); o += c > 255 ? '?' : (ch === '(' || ch === ')' || ch === '\\') ? '\\' + ch : c > 126 || c < 32 ? '\\' + c.toString(8).padStart(3, '0') : ch; } return o; }
+async function fotoJPEG(src) {
+  if (/^data:image\/jpe?g/i.test(src)) return { bytes: b64Bytes(src.split(',')[1]), im: await cargarImagen(src) };
+  const im = await cargarImagen(src), c = lienzo(im.width, im.height), x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); x.drawImage(im, 0, 0);
+  const d = c.toDataURL('image/jpeg', 0.85); return { bytes: b64Bytes(d.split(',')[1]), im };
+}
+// Arma un PDF de una página tamaño carta con la foto ajustada y un encabezado con los datos del gasto
+async function pdfFactura(src, titulo, detalle) {
+  const { bytes, im } = await fotoJPEG(src), W = 612, H = 792, m = 28, top = 58;
+  const k = Math.min((W - 2 * m) / im.width, (H - top - m) / im.height), iw = im.width * k, ih = im.height * k, ix = (W - iw) / 2, iy = H - top - ih;
+  const cont = `BT /F1 12 Tf ${m} ${H - 30} Td (${pdfTexto(titulo)}) Tj ET\nBT /F2 9 Tf ${m} ${H - 45} Td (${pdfTexto(detalle)}) Tj ET\nq ${iw.toFixed(2)} 0 0 ${ih.toFixed(2)} ${ix.toFixed(2)} ${iy.toFixed(2)} cm /Im1 Do Q`;
+  const enc = new TextEncoder(), partes = [], offs = []; let largo = 0;
+  const add = x => { const b = typeof x === 'string' ? Uint8Array.from(x, c => c.charCodeAt(0) & 255) : x; partes.push(b); largo += b.length; };
+  const obj = (n, cuerpo) => { offs[n] = largo; add(`${n} 0 obj\n`); for (const c of [].concat(cuerpo)) add(c); add('\nendobj\n'); };
+  add('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
+  obj(1, '<< /Type /Catalog /Pages 2 0 R >>');
+  obj(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+  obj(3, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 5 0 R /F2 6 0 R >> /XObject << /Im1 7 0 R >> >> /Contents 4 0 R >>`);
+  obj(4, [`<< /Length ${cont.length} >>\nstream\n`, cont, '\nendstream']);
+  obj(5, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
+  obj(6, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
+  obj(7, [`<< /Type /XObject /Subtype /Image /Width ${im.width} /Height ${im.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${bytes.length} >>\nstream\n`, bytes, '\nendstream']);
+  const xref = largo; add(`xref\n0 8\n0000000000 65535 f \n${offs.slice(1).map(o => String(o).padStart(10, '0') + ' 00000 n \n').join('')}trailer\n<< /Size 8 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+  const out = new Uint8Array(largo); let p = 0; for (const b of partes) { out.set(b, p); p += b.length; } void enc;
+  return out;
+}
+function nombrePDF(g, usados) {
+  const limpiar = x => String(x || '').replace(/[\\/:*?"<>|#%]+/g, ' ').replace(/\s+/g, ' ').trim();
+  let n = limpiar(`Factura ${g.fecha || ''} ${(g.proveedor || g.razon || g.concepto || '').slice(0, 40)} ${g.factura ? 'N ' + g.factura.replace(/\s+/g, '') : fmtCOP(g.valor).replace(/\s/g, '')}`);
+  if (usados.has(n.toLowerCase())) n += ' ' + g.id.slice(-4);
+  usados.add(n.toLowerCase()); return n + '.pdf';
+}
+// Sube a la carpeta del proyecto un PDF por cada gasto con foto. Salta los que ya se subieron con la misma foto.
+async function subirSoportesPDF(gastos, carpeta, carpetaId, sub, aviso) {
+  const con = gastos.filter(g => g.foto), usados = new Set(); let n = 0, saltados = 0;
+  const orden = con.slice().sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
+  for (const g of orden) {
+    const nombre = nombrePDF(g, usados), marca = String(g.fotoV || 1);
+    if (g.pdfDrive === marca + '|' + nombre) { saltados++; continue; }
+    const src = await DB.get('foto:' + g.id); if (!src) continue;
+    aviso && aviso(`Subiendo soportes en PDF (${n + saltados + 1} de ${orden.length})…`);
+    const titulo = `${g.proveedor || g.razon || g.concepto || 'Gasto'} · ${fmtCOP(g.valor)}`;
+    const detalle = `Fecha ${fmtFecha(g.fecha)} · ${g.concepto || ''}${g.sub ? ' / ' + g.sub : ''}${g.factura ? ' · Factura N° ' + g.factura : ''}${g.nit ? ' · NIT ' + g.nit : ''} · Pagado por ${g.pagadoPor || ''}`;
+    await GW.subir(await pdfFactura(src, titulo, detalle), nombre, 'application/pdf', carpeta, carpetaId, sub);
+    g.pdfDrive = marca + '|' + nombre; n++;
+  }
+  if (n) await guardar();
+  return n;
+}
+
 /* ---------- Escáner de facturas (recorte, perspectiva y filtro de documento) ---------- */
 function cargarImagen(src) { return new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = src; }); }
 function leerArchivo(file) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); }); }
@@ -2077,7 +2130,7 @@ const GW = {
     const q = `name = '${this.q(nombre)}' and '${destino}' in parents and trashed = false`;
     const f = (await this.api('GET', `https://www.googleapis.com/drive/v3/files?${this.TODAS}&fields=files(id)&q=${encodeURIComponent(q)}`)).files || [];
     let res;
-    const xlsx = /\.xlsx$/i.test(nombre), restr = ro => this.api('PATCH', `https://www.googleapis.com/drive/v3/files/${f.length ? f[0].id : res.id}?supportsAllDrives=true&fields=id`, JSON.stringify({ contentRestrictions: [ro ? { readOnly: true, reason: 'Legalización enviada desde la app Viáticos Sistronic. No modificar.' } : { readOnly: false }] }), 'application/json; charset=UTF-8').catch(() => {});
+    const xlsx = /\.(xlsx|pdf)$/i.test(nombre), restr = ro => this.api('PATCH', `https://www.googleapis.com/drive/v3/files/${f.length ? f[0].id : res.id}?supportsAllDrives=true&fields=id`, JSON.stringify({ contentRestrictions: [ro ? { readOnly: true, reason: 'Legalización enviada desde la app Viáticos Sistronic. No modificar.' } : { readOnly: false }] }), 'application/json; charset=UTF-8').catch(() => {});
     if (f.length && xlsx) await restr(false);
     if (f.length) res = await this.api('PATCH', `https://www.googleapis.com/upload/drive/v3/files/${f[0].id}?uploadType=media&supportsAllDrives=true&fields=id,webViewLink`, new Blob([bytes], { type: mime }), mime);
     else {
@@ -2461,6 +2514,8 @@ async function subirDrive(tipo, corteId) {
     const v = v0, c = driveCfg();
     const base = c.porViaje ? `COT ${v.cot || 'sin COT'} ${v.cliente || ''}`.replace(/[\\/:*?"<>|]+/g, ' ').trim() : '';
     const sub = tipo === 'backup' ? 'Copias de seguridad' : cortesDe(v0).length ? carpetaProyecto(v0) : base;
+    if (tipo !== 'backup') await subirSoportesPDF(vx.gastos, c.carpetaId ? c.carpetaNombre || 'Carpeta compartida' : c.carpeta || 'Viáticos Sistronic', c.carpetaId || '', sub, t => { driveUltimo = { estado: 'subiendo', txt: t }; render(); });
+    driveUltimo = { estado: 'subiendo' }; render();
     const b64 = await blobB64(blob), mime = blob.type || 'application/octet-stream';
     if (c.carpetaId && Android.uploadDrive2) Android.uploadDrive2(b64, nombre, mime, c.carpetaNombre || 'Carpeta compartida', c.carpetaId, sub);
     else Android.uploadDrive(b64, nombre, mime, c.carpeta || 'Viáticos Sistronic', sub);
@@ -2501,7 +2556,7 @@ window.onMailError = msg => { correoEstado = { estado: 'error', msg }; toast(msg
 window.onDriveError = msg => { driveSubiendo = false; driveUltimo = { estado: 'error', msg }; toast(msg); render(); };
 function vDriveEstado() {
   const d = driveUltimo; if (!d) return '';
-  if (d.estado === 'subiendo') return `<div class="note ia-busy"><span class="spin"></span> <span class="txt">${driveTipo === 'xlsx' ? 'Enviando a revisión (subiendo a Google Drive)…' : 'Subiendo a Google Drive…'}</span></div>`;
+  if (d.estado === 'subiendo') return `<div class="note ia-busy"><span class="spin"></span> <span class="txt">${d.txt ? esc(d.txt) : driveTipo === 'xlsx' ? 'Enviando a revisión (subiendo a Google Drive)…' : 'Subiendo a Google Drive…'}</span></div>`;
   if (d.estado === 'ok') {
     const m = correoEstado, para = correosAviso();
     const aviso = !m ? (d.tipo === 'xlsx' && para.length && Android.sendMail ? `<button class="btn" data-act="mail-enviar" style="margin-top:6px">Enviar aviso por correo</button>` : '')
@@ -2520,7 +2575,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '37 (26/11/2026)';
+const APP_VERSION = '38 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
