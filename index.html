@@ -2889,7 +2889,7 @@ function vDriveEstado() {
    Al enviar a revisión, la app del trabajador crea en SU Drive una "ficha" (JSON) con el resumen de la legalización
    y la comparte con quienes aprueban (sin correo de Google). El aprobador ve las fichas, aprueba o devuelve, y la
    decisión queda en la ficha: la app del trabajador la lee y actualiza el estado. */
-const ADMIN_CORREOS = ['administracion@sistronic.com.co', atob('bW9jLmxpYW1nQDU5cm9jbmFkZQ==').split('').reverse().join('')];
+const ADMIN_CORREOS = ['administracion@sistronic.com.co', 'proyectos1@sistronic.com.co', atob('bW9jLmxpYW1nQDU5cm9jbmFkZQ==').split('').reverse().join('')];
 const correoActual = () => (enAndroidGoogle() ? Android.getEmail() || '' : '').toLowerCase();
 const esAdmin = () => ADMIN_CORREOS.includes(correoActual());
 const FICHAS_CARPETA = 'Viáticos Sistronic - fichas de aprobación (no borrar)';
@@ -3065,7 +3065,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '49 (26/11/2026)';
+const APP_VERSION = '50 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
