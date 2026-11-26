@@ -74,6 +74,29 @@ let S = null;          // { viajes:[], activo, listas, perfil }
 let tab = 'gastos';
 let filtroFact = 'Todos';
 
+/* ---------- Servicios diarios: legalización con varias órdenes de servicio ---------- */
+const SERV = 'Servicios diarios';
+const esServ = v => !!v && v.tipo === 'servicios';
+const osClientes = () => (S.osClientes = S.osClientes || {});
+const osTxt = g => g.os ? `OS ${g.os}${g.osCliente ? ' (' + g.osCliente + ')' : ''}` : 'Sin OS';
+function tituloViaje(v) { return esServ(v) ? `🧰 ${SERV}${v.trabajador ? ' · ' + v.trabajador.split(' ')[0] : ''}` : [v.cliente || 'Viaje sin nombre', v.cot ? 'COT ' + v.cot : ''].filter(Boolean).join(' · '); }
+function subViaje(v) { return esServ(v) ? `${v.servicio && v.servicio !== SERV ? v.servicio + ' · ' : ''}${fmtFecha(v.inicio)} a ${fmtFecha(v.fin)}` : `${v.servicio || ''}${v.ciudad ? ' — ' + v.ciudad : ''} · ${fmtFecha(v.inicio)} a ${fmtFecha(v.fin)}`; }
+function hacerServicios(v, si) {
+  if (si) { v.tipo = 'servicios'; v.cot = SERV; v.os = SERV; if (!v.cliente) v.cliente = 'Varios (ver OS)'; if (!v.servicio) v.servicio = SERV; }
+  else { delete v.tipo; if (v.cot === SERV) v.cot = ''; if (v.os === SERV) v.os = ''; if (v.cliente === 'Varios (ver OS)') v.cliente = ''; if (v.servicio === SERV) v.servicio = ''; }
+}
+// OS usadas en el viaje (las más recientes primero) con su cliente
+function osDelViaje(v) {
+  const m = new Map();
+  for (const g of [...v.gastos].sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))) if (g.os && !m.has(g.os)) m.set(g.os, g.osCliente || osClientes()[g.os] || '');
+  return [...m.entries()];
+}
+function resumenPorOS(v) {
+  const m = new Map();
+  for (const g of conValor(v)) { const k = g.os || ''; const o = m.get(k) || { os: k, cliente: g.osCliente || osClientes()[k] || '', n: 0, emp: 0, sis: 0 }; o.n++; if (g.pagadoPor === 'Sistronic') o.sis += Number(g.valor) || 0; else o.emp += Number(g.valor) || 0; m.set(k, o); }
+  return [...m.values()].sort((a, b) => String(a.os).localeCompare(String(b.os), 'es', { numeric: true }));
+}
+let vistaGastos = 'fecha';
 function nuevoGasto(arr) {
   const [fecha, concepto, sub, proveedor, desc, valor, pagadoPor, factura, soporte, obs] = arr;
   return { id: uid(), fecha, concepto, sub, proveedor, desc, valor, pagadoPor, factura, soporte, obs, foto: false };
@@ -175,11 +198,12 @@ function legalizacion(v) {
   const gs = conValor(v).filter(g => g.pagadoPor !== 'Sistronic');
   const m = new Map();
   gs.forEach(g => {
-    const k = (g.sub || g.concepto || '').trim();
-    const o = m.get(k) || { d: k, n: 0, t: 0, f: new Set() };
+    let k = (g.sub || g.concepto || '').trim();
+    if (esServ(v)) { const cli = g.osCliente || osClientes()[g.os] || ''; k = `${g.concepto || ''} · ${g.os ? 'OS ' + g.os : 'Sin OS'}${cli ? ' ' + cli.slice(0, 16) : ''}`; }
+    const o = m.get(k) || { d: k, os: g.os || '', n: 0, t: 0, f: new Set() };
     o.n++; o.t += Number(g.valor) || 0; if (g.factura) o.f.add(g.factura); m.set(k, o);
   });
-  const lineas = [...m.values()].sort((a, b) => a.d.localeCompare(b.d, 'es')).map(o => ({
+  const lineas = [...m.values()].sort((a, b) => (esServ(v) ? String(a.os).localeCompare(String(b.os), 'es', { numeric: true }) : 0) || a.d.localeCompare(b.d, 'es')).map(o => ({
     d: o.d, n: o.n, t: o.t, unit: o.n ? o.t / o.n : 0,
     f: o.f.size === 0 ? 'Sin factura' : o.f.size === 1 ? [...o.f][0] : `${o.f.size} facturas`
   }));
@@ -207,8 +231,8 @@ const TABS = [['gastos', 'Gastos', ICON.gastos], ['resumen', 'Resumen', ICON.res
 /* ---------- Render ---------- */
 function render() {
   const v = viaje();
-  $('#trip-name').textContent = [v.cliente || 'Viaje sin nombre', v.cot ? 'COT ' + v.cot : ''].filter(Boolean).join(' · ');
-  $('#trip-sub').textContent = `${v.servicio || ''}${v.ciudad ? ' — ' + v.ciudad : ''} · ${fmtFecha(v.inicio)} a ${fmtFecha(v.fin)}`;
+  $('#trip-name').textContent = tituloViaje(v);
+  $('#trip-sub').textContent = subViaje(v);
   $('#tabs').innerHTML = TABS.map(([k, l, i]) => `<button role="tab" aria-selected="${tab === k}" data-tab="${k}">${i}<span>${l}</span></button>`).join('');
   $('#fab').hidden = !(tab === 'gastos' || tab === 'facturas');
   const main = $('#main');
@@ -235,19 +259,23 @@ function vGastos(v) {
   </div>
   <h2>Gastos registrados (${v.gastos.length})</h2>`;
   if (!v.gastos.length) return h + `<div class="empty">Todavía no hay gastos en este viaje.<br>Toque <b>Registrar gasto</b> para agregar el primero.</div>`;
-  const orden = [...v.gastos].sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
+  const porOS = esServ(v) && vistaGastos === 'os';
+  if (esServ(v)) h += `<div class="seg" role="group" style="margin-bottom:10px"><button type="button" data-act="vista-gastos" data-v="fecha" aria-pressed="${!porOS}">Por fecha</button><button type="button" data-act="vista-gastos" data-v="os" aria-pressed="${porOS}">Por OS</button></div>`;
+  const orden = [...v.gastos].sort((a, b) => porOS ? String(a.os || '~').localeCompare(String(b.os || '~'), 'es', { numeric: true }) || (b.fecha || '').localeCompare(a.fecha || '') : (b.fecha || '').localeCompare(a.fecha || ''));
   let dia = null;
   h += '<div class="list">';
   for (const g of orden) {
-    if (g.fecha !== dia) {
-      dia = g.fecha;
-      const tot = sum(v.gastos.filter(x => x.fecha === dia), x => x.valor);
-      h += `<div class="day"><span>${fmtDia(dia)}</span><span class="num">${fmtCOP(tot)}</span></div>`;
+    const grupo = porOS ? (g.os || '') : g.fecha;
+    if (grupo !== dia) {
+      dia = grupo;
+      const tot = sum(v.gastos.filter(x => (porOS ? (x.os || '') : x.fecha) === dia), x => x.valor);
+      const cli = porOS ? (g.osCliente || osClientes()[g.os] || '') : '';
+      h += `<div class="day"><span>${porOS ? (dia ? '🧾 OS ' + esc(dia) + (cli ? ' · ' + esc(cli) : '') : '⚠ Sin OS') : fmtDia(dia)}</span><span class="num">${fmtCOP(tot)}</span></div>`;
     }
     const e = estado(g);
     h += `<button class="item" data-edit="${g.id}">
       <span class="t">${esc(g.sub || g.concepto)}${g.proveedor ? ' · ' + esc(g.proveedor) : ''}</span><span class="a num">${fmtCOP(g.valor)}</span>
-      <span class="s">${esc(g.desc || g.concepto)}${g.factura ? ' · Fact. ' + esc(g.factura) : ''}${g.foto ? ' · 📷' : ''}${g.corte && corteDeGasto(g) ? ' · 🔒 Corte ' + corteDeGasto(g).n : ''}</span><span class="chip ${chipClass(e)}">${e === 'PAGADO POR SISTRONIC' ? 'SISTRONIC' : e}</span>
+      <span class="s">${esServ(v) ? (porOS ? fmtFecha(g.fecha) + ' · ' : (g.os ? 'OS ' + esc(g.os) + ' · ' : '⚠ Sin OS · ')) : ''}${esc(g.desc || g.concepto)}${g.factura ? ' · Fact. ' + esc(g.factura) : ''}${g.foto ? ' · 📷' : ''}${g.corte && corteDeGasto(g) ? ' · 🔒 Corte ' + corteDeGasto(g).n : ''}</span><span class="chip ${chipClass(e)}">${e === 'PAGADO POR SISTRONIC' ? 'SISTRONIC' : e}</span>
     </button>`;
   }
   return h + '</div>';
@@ -352,7 +380,7 @@ function foHTML(v) {
       ${filas.join('')}
       <tr class="total"><td colspan="7" style="text-align:right;font-weight:700">TOTAL VIÁTICOS</td><td class="r"><b>${fmtCOP(L.total)}</b></td></tr>
     </table>
-    <table class="sign" style="margin-top:14px"><tr><td>Solicitado por</td><td>Revisado</td><td>Aprobado</td></tr></table>
+    <table class="sign" style="margin-top:14px"><tr><td>${S.firma ? `<img class="fo-firma" src="${S.firma}" alt="Firma">` : ''}Solicitado por</td><td>Revisado</td><td>Aprobado</td></tr></table>
   </div>` };
 }
 /* ---------- Cortes: legalización parcial por cierre de mes ---------- */
@@ -499,7 +527,8 @@ async function agregarHojaCortes(zip, v) {
   const wrels = await zip.file('xl/_rels/workbook.xml.rels').async('string');
   zip.file('xl/_rels/workbook.xml.rels', wrels.replace('</Relationships>', '<Relationship Id="rIdCortes" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheetCortes.xml"/></Relationships>'));
 }
-const nombreArchivoViaje = v => `COT_${(v.cot || 'sin-cot').replace(/[^\w.-]+/g, '_')} ${v.cliente || ''} - ${v.servicio || 'viaticos'}`.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim();
+const mesDe = v => { const d = parseISO(v.inicio); return d ? MESES_L[d.getMonth()] + ' ' + d.getFullYear() : ''; };
+const nombreArchivoViaje = v => esServ(v) ? `Servicios diarios ${v.trabajador || ''} ${mesDe(v)}`.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim() : `COT_${(v.cot || 'sin-cot').replace(/[^\w.-]+/g, '_')} ${v.cliente || ''} - ${v.servicio || 'viaticos'}`.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim();
 /* Libro aparte, solo con el resumen de todos los cortes y el total del proyecto */
 async function excelResumenCortes(v, soloGenerar) {
   const JSZip = await cargarScript('vendor/jszip.min.js', 'JSZip'), z = new JSZip();
@@ -519,7 +548,7 @@ async function excelResumenCortes(v, soloGenerar) {
   await entregarArchivo(blob, nombre);
 }
 /* Carpeta del proyecto en Drive: siempre se usa cuando el viaje tiene cortes (sin subcarpetas) */
-const carpetaProyecto = v => `COT ${v.cot || 'sin COT'} ${v.cliente || ''}${v.servicio ? ' - ' + v.servicio : ''}`.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+const carpetaProyecto = v => esServ(v) ? `Servicios diarios - ${v.trabajador || 'sin nombre'} - ${mesDe(v)}`.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120) : `COT ${v.cot || 'sin COT'} ${v.cliente || ''}${v.servicio ? ' - ' + v.servicio : ''}`.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
 /* Legalización final con cortes: lo que falta se vuelve el último corte, y se sube un Excel aparte con el resumen */
 async function enviarFinalCortes() {
   if (!enAndroidGoogle()) { toast('Subir a Drive requiere iniciar sesión con Google'); return; }
@@ -658,15 +687,23 @@ async function guardarConcepto(forzarActivo) {
   S.conceptosCfg[nom] = { icono: e.icono, color: e.color, subsOff: activo ? offs : [] };
   await guardar(); cpEdit = null; cerrarSheet(); render(); toast(activo ? 'Concepto guardado' : 'Concepto desactivado');
 }
+function vOSResumen(v) {
+  const R = resumenPorOS(v); if (!R.length) return '';
+  return `<div class="field"><span>Órdenes de servicio en esta legalización</span><div class="os-res">${R.map(o => `<div><b>${o.os ? 'OS ' + esc(o.os) : 'Sin OS'}</b>${o.cliente ? ' · ' + esc(o.cliente) : ''}<span class="num">${fmtCOP(o.emp + o.sis)}</span></div>`).join('')}</div></div>`;
+}
 function vViaje(v) {
   const f = (k, l, t = 'text', extra = '') => `<label class="field"><span>${l}</span><input id="vj-${k}" type="${t}" data-vf="${k}" value="${esc(v[k])}" ${extra}></label>`;
-  return `<h2>Datos del viaje</h2>
+  const sv = esServ(v);
+  return `<h2>Datos ${sv ? 'de la legalización' : 'del viaje'}</h2>
   <div class="form card">
+    <div class="field"><span>Tipo de legalización</span><div class="seg" role="group"><button type="button" data-act="tipo-viaje" data-v="proyecto" aria-pressed="${!sv}">📁 Proyecto</button><button type="button" data-act="tipo-viaje" data-v="servicios" aria-pressed="${sv}">🧰 Servicios diarios</button></div>
+      ${sv ? '<p class="hint" style="margin:4px 0 0">Varias órdenes de servicio en una sola legalización: cada gasto lleva su OS y su cliente.</p>' : ''}</div>
     ${f('trabajador', 'Trabajador')}
     <div class="grid2">${f('cedula', 'Cédula', 'text', 'inputmode="numeric"')}${f('ciudad', 'Ciudad')}</div>
-    ${f('cliente', 'Cliente / Empresa')}
-    ${f('servicio', 'Servicio / Proyecto')}
-    <div class="grid2">${f('cot', 'COT / Orden de compra')}${f('os', 'OS No.')}</div>
+    ${f('cliente', sv ? 'Cliente (general)' : 'Cliente / Empresa')}
+    ${f('servicio', sv ? 'Descripción' : 'Servicio / Proyecto')}
+    <div class="grid2">${sv ? f('cot', 'COT / Orden de compra', 'text', 'readonly') + f('os', 'OS No.', 'text', 'readonly') : f('cot', 'COT / Orden de compra') + f('os', 'OS No.')}</div>
+    ${sv ? vOSResumen(v) : ''}
     <div class="grid2">${f('inicio', 'Fecha inicio', 'date')}${f('fin', 'Fecha fin', 'date')}</div>
     <div class="grid2">
       <label class="field"><span>Anticipo recibido</span><input id="vj-anticipo" inputmode="numeric" data-vf="anticipo" data-money value="${Number(v.anticipo || 0).toLocaleString('es-CO')}"></label>
@@ -767,6 +804,7 @@ async function leerFacturaIA(dataUrl, textoPDF) {
 - concepto: uno de: ${conceptos.join(', ')}.
 - subconcepto: uno de la lista del concepto elegido:
 ${subs}
+- orden_servicio: número de orden de servicio (OS) si aparece en el documento (ej. "OS 3201" → "3201"), si no "".
 - descripcion: descripción general y corta del gasto (máx. 5 palabras), en español, según el tipo de gasto y el momento, por ejemplo "Almuerzo", "Cena", "Desayuno", "Hospedaje", "Transporte al aeropuerto". NUNCA mencione los productos, platos, bebidas ni artículos comprados.
 - tipo_documento_factura: uno de: ${TIPOS_DOC.join(', ')}.
 - hora: hora del documento HH:MM (24 h) si aparece, si no "".
@@ -792,7 +830,7 @@ Si un dato no se puede leer, deje "" (o 0 en valor). No invente datos.`;
   const schema = {
     type: 'OBJECT',
     properties: {
-      proveedor: { type: 'STRING' }, nit: { type: 'STRING' }, fecha: { type: 'STRING' }, factura: { type: 'STRING' },
+      proveedor: { type: 'STRING' }, nit: { type: 'STRING' }, orden_servicio: { type: 'STRING' }, fecha: { type: 'STRING' }, factura: { type: 'STRING' },
       valor: { type: 'NUMBER' }, concepto: { type: 'STRING', enum: conceptos }, subconcepto: { type: 'STRING' }, descripcion: { type: 'STRING' },
       tipo_documento_factura: { type: 'STRING' }, hora: { type: 'STRING' }, cufe: { type: 'STRING' }, comprador_nombre: { type: 'STRING' }, comprador_nit: { type: 'STRING' },
       subtotal: { type: 'NUMBER' }, iva_porcentaje: { type: 'NUMBER' }, iva_valor: { type: 'NUMBER' }, inc_porcentaje: { type: 'NUMBER' }, inc_valor: { type: 'NUMBER' },
@@ -820,7 +858,7 @@ Si un dato no se puede leer, deje "" (o 0 en valor). No invente datos.`;
 function normalizarIA(d) {
   const out = {};
   const s = x => (x == null ? '' : String(x)).trim();
-  out.proveedor = s(d.proveedor); out.nit = s(d.nit); out.factura = s(d.factura); out.descripcion = s(d.descripcion);
+  out.proveedor = s(d.proveedor); out.nit = s(d.nit); out.os = s(d.orden_servicio).replace(/^os\s*/i, ''); out.factura = s(d.factura); out.descripcion = s(d.descripcion);
   const f = s(d.fecha); let iso = '';
   let mm = f.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); if (mm) iso = `${mm[1]}-${pad(mm[2])}-${pad(mm[3])}`;
   else if ((mm = f.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})/))) iso = `${mm[3].length === 2 ? '20' + mm[3] : mm[3]}-${pad(mm[2])}-${pad(mm[1])}`;
@@ -861,6 +899,7 @@ async function aplicarIA(dataUrl) {
     leerFormGasto();
     const g = editando, llenos = [];
     const set = (k, val, label) => { if (val !== '' && val != null && (g[k] === '' || g[k] == null)) { g[k] = val; llenos.push(label); } };
+    if (esServ(viaje()) && d.os && !g.os) { g.os = d.os; if (!g.osCliente && osClientes()[d.os]) g.osCliente = osClientes()[d.os]; llenos.push('OS'); }
     set('valor', d.valor, 'valor'); set('proveedor', d.proveedor, 'proveedor'); set('factura', d.factura, 'N° factura'); set('desc', d.descripcion, 'descripción');
     if (d.fecha && (g._nuevo || !g.fecha)) { g.fecha = d.fecha; llenos.push('fecha'); }
     if (d.concepto && (g._nuevo || !g.sub)) { if (g.concepto !== d.concepto || !g.sub) { g.concepto = d.concepto; g.sub = d.sub; llenos.push('concepto'); } }
@@ -935,6 +974,14 @@ function abrirGasto(id) {
   if (g?.foto) DB.get('foto:' + g.id).then(src => { if (src && editando?.id === g.id) { const im = $('#g-foto-prev'); if (im) { im.src = src; im.hidden = false; } } });
 }
 function hoyEnRango(v) { const t = todayISO(); if (v.inicio && t < v.inicio) return v.inicio; if (v.fin && t > v.fin) return v.fin; return t; }
+function vCampoOS(g, v) {
+  const rec = osDelViaje(v).filter(([o]) => o !== g.os).slice(0, 8);
+  return `<div class="grid2 os-campos">
+      <label class="field"><span>Orden de servicio (OS) *</span><input id="g-os" inputmode="text" autocomplete="off" value="${esc(g.os || '')}" placeholder="Ej. 3201"></label>
+      <label class="field"><span>Cliente de la OS</span><input id="g-oscli" autocomplete="off" value="${esc(g.osCliente || '')}" placeholder="Ej. Abbott"></label>
+    </div>
+    ${rec.length ? `<div class="os-chips">${rec.map(([o, c]) => `<button type="button" class="cp-chip" data-act="os-chip" data-os="${esc(o)}" data-cli="${esc(c)}">OS ${esc(o)}${c ? ' · ' + esc(c) : ''}</button>`).join('')}</div>` : ''}`;
+}
 function pintarGasto(anim) {
   const g = editando, v = viaje();
   const subs = S.listas[g.concepto] || (S.conceptosOff || {})[g.concepto] || [];
@@ -957,6 +1004,7 @@ function pintarGasto(anim) {
       <label class="field"><span>Valor total COP</span><input id="g-valor" class="val-input num" inputmode="numeric" required data-money placeholder="$ 0" value="${g.valor === '' ? '' : Number(g.valor).toLocaleString('es-CO')}"></label>
       <div class="field"><span>Concepto</span><div class="seg" role="group" data-seg="concepto">${[...Object.keys(S.listas), ...(g.concepto && !(g.concepto in S.listas) ? [g.concepto] : [])].map(o => `<button type="button" data-val="${esc(o)}" aria-pressed="${g.concepto === o}">${cpIcono(o)} ${esc(o)}</button>`).join('')}</div></div>
       <label class="field"><span>Subconcepto</span><select id="g-sub"><option value="">— Sin subconcepto —</option>${subs.map(s => `<option ${s === g.sub ? 'selected' : ''}>${esc(s)}</option>`).join('')}${g.sub && !subs.includes(g.sub) ? `<option selected>${esc(g.sub)}</option>` : ''}</select></label>
+      ${esServ(v) ? vCampoOS(g, v) : ''}
       <div class="grid2">
         <label class="field"><span>Fecha</span><input id="g-fecha" type="date" required value="${esc(g.fecha)}"></label>
         <label class="field"><span>N° Factura / Comprobante</span><input id="g-factura" value="${esc(g.factura)}"></label>
@@ -988,6 +1036,7 @@ function leerFormGasto() {
   g.valor = $('#g-valor').value.trim() === '' ? '' : parseValor($('#g-valor').value);
   g.sub = $('#g-sub').value; g.fecha = $('#g-fecha').value; g.factura = $('#g-factura').value.trim();
   g.proveedor = $('#g-prov').value.trim(); g.desc = $('#g-desc').value.trim(); g.obs = $('#g-obs').value.trim();
+  if ($('#g-os')) { g.os = $('#g-os').value.trim().replace(/^os\s*/i, ''); g.osCliente = $('#g-oscli').value.trim(); }
   g.razon = $('#g-razon').value.trim(); g.nit = soloDig($('#g-nit').value); g.dvImpreso = soloDig($('#g-dv').value).slice(0, 1);
   for (const [k, tipo] of FX_CAMPOS) { const el = $('#gx-' + k); if (!el) continue; g[k] = tipo === 'm' ? (el.value.trim() === '' ? '' : parseValor(el.value)) : tipo === 'p' ? (el.value.trim() === '' ? '' : Number(String(el.value).replace(',', '.')) || 0) : el.value.trim(); }
 }
@@ -1124,6 +1173,9 @@ async function guardarGasto(otro, forzar) {
   if (!g.corte) { const k = cortesDe(viaje()).find(c => g.fecha && g.fecha >= c.desde && g.fecha <= c.hasta && (!c.revision || c.revision.estado !== 'devuelto')); if (k && g._nuevo) toast(`Ojo: la fecha cae en el ${nombreCorte(k)}, ya enviado. Este gasto irá al siguiente corte.`); }
   if (g.valor === '' || g.valor <= 0) { toast('Escriba el valor del gasto'); $('#g-valor').focus(); return; }
   if (!g.fecha) { toast('Elija la fecha'); return; }
+  if (esServ(viaje()) && !g.os) { toast('Escriba la orden de servicio (OS)'); $('#g-os')?.focus(); return; }
+  if (g.os && g.osCliente) osClientes()[g.os] = g.osCliente;
+  else if (g.os && !g.osCliente && osClientes()[g.os]) g.osCliente = osClientes()[g.os];
   if (!forzar) {
     const d = facturaRepetida(g);
     if (d) {
@@ -1154,6 +1206,68 @@ async function guardarGasto(otro, forzar) {
   render();
 }
 function cerrarSheet() { $('#sheet').innerHTML = ''; editando = null; fotoTmp = undefined; }
+
+/* ---------- Firma para la legalización (casilla "Solicitado por") ---------- */
+// Recorta lo transparente o blanco y devuelve PNG (máx. 600 x 240)
+function recortarFirma(c, alfaMin) {
+  const W = c.width, H = c.height, d = c.getContext('2d').getImageData(0, 0, W, H).data; let x0 = W, y0 = H, x1 = -1, y1 = -1;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (d[(y * W + x) * 4 + 3] > alfaMin) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  if (x1 < 0) return null;
+  const m = 6; x0 = Math.max(0, x0 - m); y0 = Math.max(0, y0 - m); x1 = Math.min(W - 1, x1 + m); y1 = Math.min(H - 1, y1 + m);
+  const w = x1 - x0 + 1, h = y1 - y0 + 1, k = Math.min(1, 600 / w, 240 / h), o = lienzo(Math.round(w * k), Math.round(h * k));
+  const ox = o.getContext('2d'); ox.imageSmoothingQuality = 'high'; ox.drawImage(c, x0, y0, w, h, 0, 0, o.width, o.height);
+  return o.toDataURL('image/png');
+}
+// Foto o escaneo de una firma en papel: el papel se vuelve transparente y la tinta queda oscura
+async function firmaDeImagen(file) {
+  const im = await cargarImagen(await leerArchivo(file)), k = Math.min(1, 1400 / Math.max(im.width, im.height));
+  const c = lienzo(Math.round(im.width * k), Math.round(im.height * k)), x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(im, 0, 0, c.width, c.height);
+  const D = x.getImageData(0, 0, c.width, c.height), d = D.data, n = c.width * c.height, L = new Uint8Array(n), hist = new Array(256).fill(0);
+  let transp = 0; for (let i = 0; i < n; i++) { if (d[i * 4 + 3] < 128) transp++; L[i] = Math.round(0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]); hist[L[i]]++; }
+  if (transp > n * 0.2) return recortarFirma(c, 40); // ya venía con fondo transparente
+  // Brillo del papel (percentil 80) y umbral entre tinta y papel
+  let acc = 0, papel = 255; for (let i = 255; i >= 0; i--) { acc += hist[i]; if (acc > n * 0.2) { papel = i; break; } }
+  const t = otsu(hist, n), lim = Math.min(t, papel - 25);
+  for (let i = 0; i < n; i++) { const v = L[i], o = i * 4; if (v >= lim) { d[o + 3] = 0; continue; } const a = Math.min(1, (lim - v) / Math.max(20, lim * 0.5)); d[o] = d[o + 1] = d[o + 2] = Math.round(v * 0.25); d[o + 3] = Math.round(80 + 175 * a); }
+  x.putImageData(D, 0, 0);
+  return recortarFirma(c, 40);
+}
+function abrirDibujoFirma() {
+  $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><div class="sheet anim"><div class="sheet-head"><h3>Dibujar firma</h3><button class="x" data-close="1" aria-label="Cerrar">×</button></div>
+    <p class="hint" style="margin-top:0">Firme con el dedo dentro del recuadro.</p>
+    <div class="firma-pad"><canvas id="firma-canvas"></canvas><span class="firma-linea"></span></div>
+    <div class="row" style="margin-top:12px"><button class="btn" data-act="firma-limpiar">Borrar</button><button class="btn primary" data-act="firma-ok">Guardar firma</button></div>
+  </div></div>`;
+  const c = $('#firma-canvas'), r = c.getBoundingClientRect(), dpr = Math.min(3, window.devicePixelRatio || 1);
+  c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr);
+  const x = c.getContext('2d'); x.scale(dpr, dpr); x.lineCap = x.lineJoin = 'round'; x.strokeStyle = '#111827'; x.lineWidth = 2.6;
+  let ult = null;
+  const pto = e => { const b = c.getBoundingClientRect(); return [e.clientX - b.left, e.clientY - b.top]; };
+  c.addEventListener('pointerdown', e => { e.preventDefault(); c.setPointerCapture(e.pointerId); ult = pto(e); x.beginPath(); x.arc(ult[0], ult[1], 1.2, 0, 7); x.fillStyle = '#111827'; x.fill(); });
+  c.addEventListener('pointermove', e => { if (!ult) return; const p = pto(e); x.beginPath(); x.moveTo(ult[0], ult[1]); x.lineTo(p[0], p[1]); x.stroke(); ult = p; });
+  const fin = () => { ult = null; }; c.addEventListener('pointerup', fin); c.addEventListener('pointercancel', fin);
+}
+function vFirmaCfg() {
+  return `<p class="hint" style="margin:0">Se pone en la casilla <b>Solicitado por</b> del formato de legalización FO-AD-03 (en el Excel y en la vista de la app). Se guarda en su cuenta de Google.</p>
+    ${S.firma ? `<div class="firma-prev"><img src="${S.firma}" alt="Firma"></div>` : '<div class="note" style="margin:0">Todavía no hay firma.</div>'}
+    <input id="firma-file" type="file" accept="image/*" hidden>
+    <div class="row"><button class="btn" data-act="firma-subir">🖼️ Subir imagen</button><button class="btn" data-act="firma-dibujar">✍️ Dibujarla</button>${S.firma ? '<button class="btn danger" data-act="firma-quitar">Quitar</button>' : ''}</div>
+    <p class="hint" style="margin:0">Para subirla: firme en una hoja blanca con esfero oscuro y tómele una foto de cerca. La app quita el fondo sola.</p>`;
+}
+// Inserta la firma en la hoja FO-AD-03 (sheet4 → drawing3), centrada en el recuadro B42:D43
+async function firmaEnExcel(zip) {
+  if (!S.firma) return;
+  const im = await cargarImagen(S.firma), EMU = 12700, boxW = 166, hMax = 22, k = Math.min(hMax / im.height, 150 / im.width);
+  const w = im.width * k, h = im.height * k, colOff = Math.max(0, (boxW - w) / 2), rowOff = 12 + Math.max(0, (hMax - h) / 2);
+  zip.file('xl/media/firma.png', S.firma.split(',')[1], { base64: true });
+  const pd = 'xl/drawings/drawing3.xml', pr = 'xl/drawings/_rels/drawing3.xml.rels';
+  const anc = `<xdr:oneCellAnchor><xdr:from><xdr:col>1</xdr:col><xdr:colOff>${Math.round(colOff * EMU)}</xdr:colOff><xdr:row>41</xdr:row><xdr:rowOff>${Math.round(rowOff * EMU)}</xdr:rowOff></xdr:from><xdr:ext cx="${Math.round(w * EMU)}" cy="${Math.round(h * EMU)}"/><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="90" name="Firma solicitado por"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="rIdFirma"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${Math.round(w * EMU)}" cy="${Math.round(h * EMU)}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:oneCellAnchor>`;
+  let dx = await zip.file(pd).async('string');
+  zip.file(pd, dx.replace('</xdr:wsDr>', anc + '</xdr:wsDr>'));
+  zip.file(pr, (await zip.file(pr).async('string')).replace('</Relationships>', '<Relationship Id="rIdFirma" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/firma.png"/></Relationships>'));
+  const ct = await zip.file('[Content_Types].xml').async('string');
+  if (!/Extension="png"/i.test(ct)) zip.file('[Content_Types].xml', ct.replace('</Types>', '<Default Extension="png" ContentType="image/png"/></Types>'));
+}
 
 /* ---------- Facturas en PDF: se convierten a imagen (y se saca su texto para la IA) ---------- */
 let pdfTextoTmp = null;
@@ -1251,7 +1365,7 @@ async function pdfFacturas(vx, gastos, aviso) {
     const src = await DB.get('foto:' + g.id); if (!src) continue;
     const { bytes, im } = await fotoJPEG(src), top = 64, mm = 28;
     const k = Math.min((612 - 2 * mm) / im.width, (792 - top - mm) / im.height), iw = im.width * k, ih = im.height * k, ix = (612 - iw) / 2, iy = 792 - top - ih;
-    const det = `Fecha ${fmtFecha(g.fecha)} · ${g.concepto || ''}${g.sub ? ' / ' + g.sub : ''}${g.factura ? ' · Factura N° ' + g.factura : ''}${nitTexto(g) ? ' · NIT ' + nitTexto(g) : ''} · Pagado por ${g.pagadoPor || ''}`;
+    const det = `${esServ(vx) ? osTxt(g) + ' · ' : ''}Fecha ${fmtFecha(g.fecha)} · ${g.concepto || ''}${g.sub ? ' / ' + g.sub : ''}${g.factura ? ' · Factura N° ' + g.factura : ''}${nitTexto(g) ? ' · NIT ' + nitTexto(g) : ''} · Pagado por ${g.pagadoPor || ''}`;
     const c = pdfT('F1', 12, mm, 762, `${i + 1}. ${g.proveedor || g.razon || g.concepto || 'Gasto'} · ${fmtCOP(g.valor)}`) + pdfT('F2', 9, mm, 747, cortoPDF(det, 120), true) + `q ${iw.toFixed(2)} 0 0 ${ih.toFixed(2)} ${ix.toFixed(2)} ${iy.toFixed(2)} cm /Im1 Do Q`;
     paginas.push({ cont: c, img: { bytes, w: im.width, h: im.height } });
   }
@@ -1433,7 +1547,7 @@ function comprimirFoto(file) {
 function abrirViajes() {
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><div class="sheet anim">
     <div class="sheet-head"><h3>Viajes</h3><button class="x" data-close="1" aria-label="Cerrar">×</button></div>
-    <div class="list trip-list">${[...S.viajes].sort((a, b) => (b.inicio || '').localeCompare(a.inicio || '')).map(x => { const I = indicadores(x); return `<button class="item ${x.id === S.activo ? 'on' : ''}" data-trip="${x.id}"><span class="t">${esc(x.cliente || 'Sin nombre')}${x.cot ? ' · COT ' + esc(x.cot) : ''}</span><span class="a num">${fmtCOP(I.gastado)}</span><span class="s">${esc(x.servicio)} · ${fmtFecha(x.inicio)}–${fmtFecha(x.fin)}</span><span class="s" style="text-align:right">${x.gastos.length} gastos</span><span class="s" style="grid-column:1/-1;margin-top:3px">${chipRev(x)}${x.revision ? ' <span style="margin-left:4px">' + fmtFH(x.revision.fecha) + '</span>' : ''}</span></button>`; }).join('')}</div>
+    <div class="list trip-list">${[...S.viajes].sort((a, b) => (b.inicio || '').localeCompare(a.inicio || '')).map(x => { const I = indicadores(x); return `<button class="item ${x.id === S.activo ? 'on' : ''}" data-trip="${x.id}"><span class="t">${esServ(x) ? '🧰 ' + SERV + (x.trabajador ? ' · ' + esc(x.trabajador.split(' ')[0]) : '') + ' · ' + fmtFecha(x.inicio) + '</span><span hidden>' : ''}${esc(x.cliente || 'Sin nombre')}${x.cot ? ' · COT ' + esc(x.cot) : ''}</span><span class="a num">${fmtCOP(I.gastado)}</span><span class="s">${esc(x.servicio)} · ${fmtFecha(x.inicio)}–${fmtFecha(x.fin)}</span><span class="s" style="text-align:right">${x.gastos.length} gastos</span><span class="s" style="grid-column:1/-1;margin-top:3px">${chipRev(x)}${x.revision ? ' <span style="margin-left:4px">' + fmtFH(x.revision.fecha) + '</span>' : ''}</span></button>`; }).join('')}</div>
     <div class="row" style="margin-top:14px"><button class="btn primary" data-act="new-trip">Nuevo viaje</button></div>
   </div></div>`;
 }
@@ -1586,7 +1700,7 @@ async function exportarExcel(soloGenerar, vx) {
     h1.set('B' + r, g ? serial(g.fecha) : ''); h1.set('C' + r, g ? g.concepto : ''); h1.set('D' + r, g ? g.sub : '');
     h1.set('E' + r, g ? g.proveedor : ''); h1.set('F' + r, g ? g.desc : ''); h1.set('G' + r, g ? num(g.valor) : '');
     h1.set('H' + r, g ? g.pagadoPor : ''); h1.set('I' + r, g ? g.factura : ''); h1.set('J' + r, g ? g.soporte : '');
-    h1.set('K' + r, g ? estado(g) : '', true); h1.set('L' + r, g ? acc : '', true); h1.set('M' + r, g ? g.obs : '');
+    h1.set('K' + r, g ? estado(g) : '', true); h1.set('L' + r, g ? acc : '', true); h1.set('M' + r, g ? (esServ(v) ? [osTxt(g), g.obs].filter(Boolean).join(' · ') : g.obs) : '');
   }
   // Valores ya calculados (por si se abre en un visor que no recalcula)
   const I = indicadores(v);
@@ -1659,6 +1773,7 @@ async function exportarExcel(soloGenerar, vx) {
   h4.set('G7', num(v.consecutivo)); h4.set('F18', v.efectivo === '' || v.efectivo == null ? '' : Number(v.efectivo));
   if (SOLO_VALORES) { L.lineas.forEach((l, i) => h4.set('K' + (22 + i), l.d)); if (!L.lineas.length) h4.set('K22', ''); h4.aplanar(); }
   zip.file(p4, h4.xml());
+  await firmaEnExcel(zip);
 
   // Hoja Listas (sheet5.xml): subconceptos A–D, filas 2 a 40
   const p5 = 'xl/worksheets/sheet5.xml', h5 = hojaXML(await zip.file(p5).async('string'));
@@ -1671,6 +1786,7 @@ async function exportarExcel(soloGenerar, vx) {
   // Hoja adicional con las fotos de las facturas
   const nFotos = await agregarHojaSoportes(zip, gs, v);
   await agregarHojaDetalle(zip, gs);
+  const conOS = esServ(v); if (conOS) await agregarHojaOS(zip, v);
   await agregarHojaTerceros(zip, gs);
 
   // Libro final (sin recálculo: solo valores)
@@ -1678,7 +1794,7 @@ async function exportarExcel(soloGenerar, vx) {
   let wb = await zip.file(pw).async('string');
   const conResumen = cortesDe(v0).length && !v._corte;
   if (conResumen) await agregarHojaCortes(zip, v0);
-  wb = wb.replace('</sheets>', `<sheet name="Soportes" sheetId="6" r:id="rIdSoportes"/><sheet name="Detalle de facturas" sheetId="8" r:id="rIdDetalle"/><sheet name="Terceros Siigo" sheetId="7" r:id="rIdTerceros"/>${conResumen ? '<sheet name="Resumen de cortes" sheetId="9" r:id="rIdCortes"/>' : ''}</sheets>`);
+  wb = wb.replace('</sheets>', `<sheet name="Soportes" sheetId="6" r:id="rIdSoportes"/><sheet name="Detalle de facturas" sheetId="8" r:id="rIdDetalle"/><sheet name="Terceros Siigo" sheetId="7" r:id="rIdTerceros"/>${conOS ? '<sheet name="Resumen por OS" sheetId="10" r:id="rIdOS"/>' : ''}${conResumen ? '<sheet name="Resumen de cortes" sheetId="9" r:id="rIdCortes"/>' : ''}</sheets>`);
   wb = wb.replace(/<calcPr([^>]*?)\/>/, (m, a) => '<calcPr' + a.replace(/\s*fullCalcOnLoad="[^"]*"/, '') + (SOLO_VALORES ? '' : ' fullCalcOnLoad="1"') + '/>');
   zip.file(pw, wb);
   if (SOLO_VALORES) {
@@ -1987,7 +2103,7 @@ function registros() {
     });
   }
   for (const [k, p] of Object.entries(S.proveedores || {})) R['p:' + k] = p;
-  R.cfg = { listas: S.listas || null, empresa: S.empresa || null, conceptosCfg: S.conceptosCfg || null, conceptosOff: S.conceptosOff || null };
+  R.cfg = { listas: S.listas || null, empresa: S.empresa || null, conceptosCfg: S.conceptosCfg || null, conceptosOff: S.conceptosOff || null, firma: S.firma || '', osClientes: S.osClientes || null };
   for (const [k, x] of Object.entries(S.perfil || {})) R.cfg['perfil.' + k] = x;
   for (const [k, x] of Object.entries(S.drive || {})) R.cfg['drive.' + k] = x;
   R.ia = { key: IA.key || '', modelo: IA.modelo || '', auto: IA.auto !== false };
@@ -2066,6 +2182,8 @@ function aplicarRegistros(F) {
   if (ia) { IA = Object.assign(IA, ia); DB.set('ia', IA); }
   if (c) {
     if (c.listas) S.listas = c.listas; if (c.empresa) S.empresa = c.empresa; if (c.conceptosCfg) S.conceptosCfg = c.conceptosCfg; if (c.conceptosOff) S.conceptosOff = c.conceptosOff;
+    if (typeof c.firma === 'string') S.firma = c.firma;
+    if (c.osClientes) S.osClientes = c.osClientes;
     const sub = pre => { const o = {}; let hay = false; for (const [k, x] of Object.entries(c)) if (k.startsWith(pre)) { o[k.slice(pre.length)] = x; hay = true; } return hay ? o : null; };
     const p = sub('perfil.') || c.perfil, d = sub('drive.') || c.drive;
     if (p) S.perfil = p; if (d) S.drive = d;
@@ -2311,7 +2429,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '43 (26/11/2026)';
+const APP_VERSION = '45 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
@@ -2368,6 +2486,8 @@ function vConfig() {
     <div class="card" id="sync-cfg" style="margin-top:12px">${vSyncCfg()}</div>
     <h2>Conceptos de gasto</h2>
     <div class="card form"><div class="row"><button class="btn" data-act="cp-abrir">Administrar conceptos y subconceptos</button></div></div>
+    <h2>Firma para la legalización</h2>
+    <div class="card form" id="firma-cfg">${vFirmaCfg()}</div>
     <h2>Facturas repetidas</h2>
     <div class="card form"><div class="row"><button class="btn" data-act="dup-abrir">Buscar facturas repetidas en todos los viajes</button></div></div>
     <h2>Google Drive</h2>
@@ -2669,6 +2789,21 @@ async function agregarHojaTerceros(zip, gs) {
   return filas.length;
 }
 /* Hoja "Detalle de facturas": una fila por gasto con todos los datos de la factura */
+async function agregarHojaOS(zip, v) {
+  const c = (ref, st, x) => x === '' || x == null ? `<c r="${ref}" s="${st}"/>` : typeof x === 'number' ? `<c r="${ref}" s="${st}"><v>${x}</v></c>` : `<c r="${ref}" s="${st}" t="inlineStr"><is><t xml:space="preserve">${xesc(x)}</t></is></c>`;
+  const cols = [['Orden de servicio', 18], ['Cliente', 30], ['N° gastos', 11], ['Pagado por el empleado', 20], ['Pagado por Sistronic', 20], ['Total', 18]];
+  const R = resumenPorOS(v);
+  let rows = `<row r="1" ht="32" customHeight="1">${cols.map(([h], i) => c(colLetra(i) + '1', 23, h)).join('')}</row>`, r = 2;
+  for (const o of R) { rows += `<row r="${r}">${[o.os ? 'OS ' + o.os : 'Sin OS', o.cliente, o.n, o.emp, o.sis, o.emp + o.sis].map((x, i) => c(colLetra(i) + r, i >= 3 ? 172 : 171, x)).join('')}</row>`; r++; }
+  const T = k => R.reduce((s, o) => s + o[k], 0);
+  rows += `<row r="${r}">${['TOTAL', '', T('n'), T('emp'), T('sis'), T('emp') + T('sis')].map((x, i) => c(colLetra(i) + r, i >= 3 ? 172 : 23, x)).join('')}</row>`;
+  zip.file('xl/worksheets/sheetOS.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="${NS_MAIN}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetPr><tabColor rgb="FFE20214"/></sheetPr><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="15"/><cols>${cols.map(([, w], i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols><sheetData>${rows}</sheetData><pageMargins left="0.5" right="0.5" top="0.6" bottom="0.6" header="0.3" footer="0.3"/></worksheet>`);
+  const types = await zip.file('[Content_Types].xml').async('string');
+  zip.file('[Content_Types].xml', types.replace('</Types>', '<Override PartName="/xl/worksheets/sheetOS.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'));
+  const wrels = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+  zip.file('xl/_rels/workbook.xml.rels', wrels.replace('</Relationships>', '<Relationship Id="rIdOS" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheetOS.xml"/></Relationships>'));
+}
 async function agregarHojaDetalle(zip, gs) {
   const cols = [['Fila en Control de Gastos', 12], ['Fecha', 12], ['Hora', 8], ['Tipo de documento', 22], ['N° factura', 16], ['CUFE', 30], ['Proveedor', 24], ['Razón social', 30], ['NIT', 13], ['DV', 5], ['Facturada a', 22], ['NIT comprador', 14], ['Concepto', 14], ['Subconcepto', 20], ['Descripción', 26], ['Subtotal', 13], ['IVA %', 7], ['IVA', 12], ['INC %', 7], ['INC', 12], ['Propina', 11], ['Descuentos', 11], ['Total', 13], ['¿Cuadra?', 9], ['Forma de pago', 12], ['Medio de pago', 15], ['Pagado por', 11], ['Soporte', 9], ['Estado', 22], ['Observaciones', 30]];
   const c = (ref, st, v) => v === '' || v == null ? `<c r="${ref}" s="${st}"/>` : typeof v === 'number' ? `<c r="${ref}" s="${st}"><v>${v}</v></c>` : `<c r="${ref}" s="${st}" t="inlineStr"><is><t xml:space="preserve">${xesc(v)}</t></is></c>`;
@@ -2737,6 +2872,11 @@ document.addEventListener('click', async e => {
     case 'g-del': $('#g-del').innerHTML = '<div class="note">¿Eliminar este gasto? No se puede deshacer.</div><div class="row" style="margin-top:8px"><button type="button" class="btn danger" data-act="g-del-ok">Sí, eliminar</button><button type="button" class="btn" data-act="g-del-no">Cancelar</button></div>'; break;
     case 'g-del-no': pintarGasto(); break;
     case 'dup-abrir': abrirDuplicados(); break;
+    case 'firma-subir': $('#firma-file').click(); break;
+    case 'firma-dibujar': abrirDibujoFirma(); break;
+    case 'firma-limpiar': { const c = $('#firma-canvas'); c.getContext('2d').clearRect(0, 0, c.width, c.height); break; }
+    case 'firma-ok': { const f = recortarFirma($('#firma-canvas'), 10); if (!f) { toast('Firme dentro del recuadro'); break; } S.firma = f; await guardar(); cerrarSheet(); render(); toast('Firma guardada'); break; }
+    case 'firma-quitar': S.firma = ''; await guardar(); render(); toast('Firma quitada'); break;
     case 'dup-del': { const id = t.dataset.id, v = S.viajes.find(vv => vv.gastos.some(x => x.id === id)); const g = v && v.gastos.find(x => x.id === id); if (!g) break; if (bloqueado(g)) { toast('Este gasto está en un corte enviado'); break; }
       if (t.dataset.ok !== '1') { t.dataset.ok = '1'; t.textContent = '¿Seguro? Eliminar'; break; }
       v.gastos = v.gastos.filter(x => x.id !== id); await DB.del('foto:' + id); await guardar(); render(); abrirDuplicados(); toast('Gasto repetido eliminado'); break; }
@@ -2795,7 +2935,13 @@ document.addEventListener('click', async e => {
     }
     case 'restore': restaurar(); break;
     case 'trips': abrirViajes(); break;
-    case 'new-trip': { const v = nuevoViaje(); S.viajes.push(v); S.activo = v.id; await guardar(); cerrarSheet(); tab = 'viaje'; render(); toast('Viaje creado: complete los datos'); break; }
+    case 'new-trip': $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><div class="sheet anim"><div class="sheet-head"><h3>¿Qué va a legalizar?</h3><button class="x" data-close="1" aria-label="Cerrar">×</button></div>
+        <div class="tipo-opc"><button class="item" data-act="new-trip-tipo" data-v="proyecto"><span class="t">📁 Un proyecto</span><span class="s">Un cliente, una COT y una OS. Como siempre.</span></button>
+        <button class="item" data-act="new-trip-tipo" data-v="servicios"><span class="t">🧰 Servicios diarios</span><span class="s">Varias órdenes de servicio en la misma legalización. Cada gasto lleva su OS y su cliente.</span></button></div></div></div>`; break;
+    case 'new-trip-tipo': { const v = nuevoViaje(); if (t.dataset.v === 'servicios') hacerServicios(v, true); S.viajes.push(v); S.activo = v.id; await guardar(); cerrarSheet(); tab = 'viaje'; render(); toast(esServ(v) ? 'Legalización de servicios creada' : 'Viaje creado: complete los datos'); break; }
+    case 'tipo-viaje': { const v = viaje(), si = t.dataset.v === 'servicios'; if (si === esServ(v)) break; hacerServicios(v, si); await guardar(); render(); toast(si ? 'Ahora es una legalización de servicios diarios' : 'Ahora es una legalización de proyecto'); break; }
+    case 'os-chip': { leerFormGasto(); editando.os = t.dataset.os; editando.osCliente = t.dataset.cli || osClientes()[t.dataset.os] || ''; pintarGasto._y = $('#g-form').scrollTop; pintarGasto(); break; }
+    case 'vista-gastos': vistaGastos = t.dataset.v; render(); break;
     case 'cp-abrir': if (!cfgAbierta) { cpPendiente = true; abrirConfig(); break; } tab = 'conceptos'; cpBuscar = ''; cpAgregando = null; render(); window.scrollTo(0, 0); break;
     case 'cp-volver': tab = 'config'; render(); window.scrollTo(0, 0); break;
     case 'cp-nuevo': abrirConcepto(null); break;
@@ -2832,11 +2978,13 @@ document.addEventListener('input', e => {
     v[k] = el.hasAttribute('data-money') ? (el.value === '' ? (k === 'efectivo' ? '' : 0) : parseValor(el.value)) : el.value;
     if (['trabajador', 'cedula', 'lugar'].includes(k)) S.perfil[k] = el.value;
     guardar();
-    if (['cliente', 'cot', 'servicio', 'ciudad', 'inicio', 'fin'].includes(k)) {
-      $('#trip-name').textContent = [v.cliente || 'Viaje sin nombre', v.cot ? 'COT ' + v.cot : ''].filter(Boolean).join(' · ');
-      $('#trip-sub').textContent = `${v.servicio || ''}${v.ciudad ? ' — ' + v.ciudad : ''} · ${fmtFecha(v.inicio)} a ${fmtFecha(v.fin)}`;
+    if (['cliente', 'cot', 'servicio', 'ciudad', 'inicio', 'fin', 'trabajador'].includes(k)) {
+      $('#trip-name').textContent = tituloViaje(v);
+      $('#trip-sub').textContent = subViaje(v);
     }
   }
+  if (el.id === 'g-os' && editando) { const o = el.value.trim().replace(/^os\s*/i, ''), c = osClientes()[o], cl = $('#g-oscli'); if (c && cl && (!cl.value.trim() || cl.dataset.auto === '1')) { cl.value = c; cl.dataset.auto = '1'; } }
+  if (el.id === 'g-oscli') el.dataset.auto = '';
   if (el.id === 'dr-carpeta') { driveCfg().carpeta = el.value.trim(); guardar(); }
   if (editando && (el.dataset.fx !== undefined || ['g-valor', 'g-nit', 'g-dv', 'gx-compradorNit', 'gx-compradorNombre'].includes(el.id)) && $('#g-form')) {
     leerFormGasto();
@@ -2846,6 +2994,7 @@ document.addEventListener('input', e => {
   }
   if (el.id === 'pv-nit') { const d = $('#pv-dv'); if (d) d.textContent = dvNIT(el.value) || '—'; }
   if (corteForm && (el.id === 'ct-desde' || el.id === 'ct-hasta')) { corteForm[el.id === 'ct-desde' ? 'desde' : 'hasta'] = el.value; corteForm.adicional = parseValor(($('#ct-adic') || {}).value) || 0; const y = window.scrollY; render(); window.scrollTo(0, y); }
+  if (el.id === 'firma-file' && el.files[0]) { const fl = el.files[0]; el.value = ''; firmaDeImagen(fl).then(async f => { if (!f) { toast('No se encontró la firma en la imagen'); return; } S.firma = f; await guardar(); render(); toast('Firma guardada'); }).catch(() => toast('No se pudo leer la imagen')); }
   if (el.id === 'emp-nit') { S.empresa = Object.assign(S.empresa || {}, { nit: soloDig(el.value) }); guardar(); }
   if (el.id === 'dr-correos') { driveCfg().correos = el.value; guardar(); }
   if (el.id === 'ia-key') { IA.key = el.value.trim(); guardarIA(); }

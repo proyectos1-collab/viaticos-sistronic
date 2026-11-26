@@ -311,3 +311,24 @@ details summary { color: var(--accent); }
 .dup-info small { color: var(--muted); font-size: 12px; margin-top: 2px; }
 .dup-row .btn { flex: none; }
 .dup-btn { background: #b3261e; color: #fff; border-color: #b3261e; font-weight: 600; }
+
+/* Firma */
+.firma-prev { background: #fff; border: 1px dashed var(--line); border-radius: 10px; padding: 10px; display: flex; justify-content: center; }
+.firma-prev img { max-height: 90px; max-width: 100%; }
+.firma-pad { position: relative; background: #fff; border: 1px solid var(--line); border-radius: 12px; height: 220px; touch-action: none; }
+.firma-pad canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+.firma-linea { position: absolute; left: 10%; right: 10%; bottom: 46px; border-bottom: 1px solid #c3c9d4; pointer-events: none; }
+.fo .sign td { position: relative; }
+.fo-firma { display: block; max-height: 42px; max-width: 90%; margin: 0 auto 2px; }
+
+/* Servicios diarios */
+.tipo-opc { display: flex; flex-direction: column; gap: 10px; }
+.tipo-opc .item { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--fg); text-align: left; font: inherit; cursor: pointer; }
+.tipo-opc .item .t { font-weight: 700; font-size: 16px; }
+.tipo-opc .item .s { color: var(--muted); font-size: 13px; }
+.os-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: -4px; }
+.os-chips .cp-chip { cursor: pointer; border: 1px solid var(--line); }
+.os-res { display: flex; flex-direction: column; gap: 4px; background: var(--surface-2); border-radius: 10px; padding: 8px 12px; font-size: 14px; }
+.os-res > div { display: flex; gap: 6px; align-items: baseline; }
+.os-res .num { margin-left: auto; font-weight: 700; }
+input[readonly] { background: var(--surface-2); color: var(--muted); }
