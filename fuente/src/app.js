@@ -1102,6 +1102,150 @@ async function guardarGasto(otro, forzar) {
 }
 function cerrarSheet() { $('#sheet').innerHTML = ''; editando = null; fotoTmp = undefined; }
 
+/* ---------- Escáner de facturas (recorte, perspectiva y filtro de documento) ---------- */
+function cargarImagen(src) { return new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = src; }); }
+function leerArchivo(file) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); }); }
+function lienzo(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
+// Umbral de Otsu sobre un histograma de 256 niveles
+function otsu(hist, total) {
+  let sum = 0; for (let i = 0; i < 256; i++) sum += i * hist[i];
+  let sB = 0, wB = 0, mejor = 0, t = 127;
+  for (let i = 0; i < 256; i++) { wB += hist[i]; if (!wB) continue; const wF = total - wB; if (!wF) break; sB += i * hist[i]; const mB = sB / wB, mF = (sum - sB) / wF, v = wB * wF * (mB - mF) ** 2; if (v > mejor) { mejor = v; t = i; } }
+  return t;
+}
+// Busca el papel (zona clara y poco saturada más grande) y devuelve sus 4 esquinas en coordenadas 0..1
+function detectarBordes(im) {
+  const k = 320 / Math.max(im.width, im.height), w = Math.max(8, Math.round(im.width * k)), h = Math.max(8, Math.round(im.height * k));
+  const c = lienzo(w, h), x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(im, 0, 0, w, h);
+  const d = x.getImageData(0, 0, w, h).data, n = w * h, s = new Uint8Array(n), hist = new Array(256).fill(0);
+  for (let i = 0; i < n; i++) { const r = d[i * 4], g = d[i * 4 + 1], b = d[i * 4 + 2], mx = Math.max(r, g, b), mn = Math.min(r, g, b), v = Math.max(0, Math.min(255, Math.round((r + g + b) / 3 - (mx - mn) * 0.8))); s[i] = v; hist[v]++; }
+  const t = otsu(hist, n), m = new Uint8Array(n); for (let i = 0; i < n; i++) m[i] = s[i] > t ? 1 : 0;
+  // Componente conexa más grande
+  const lab = new Int32Array(n), pila = new Int32Array(n); let mejor = 0, mejorTam = 0, id = 0;
+  for (let i = 0; i < n; i++) {
+    if (!m[i] || lab[i]) continue; id++; let p = 0, tam = 0; pila[p++] = i; lab[i] = id;
+    while (p) { const j = pila[--p]; tam++; const jx = j % w; for (const q of [j - w, j + w, jx ? j - 1 : -1, jx < w - 1 ? j + 1 : -1]) if (q >= 0 && q < n && m[q] && !lab[q]) { lab[q] = id; pila[p++] = q; } }
+    if (tam > mejorTam) { mejorTam = tam; mejor = id; }
+  }
+  const completo = [[0, 0], [1, 0], [1, 1], [0, 1]];
+  if (mejorTam < n * 0.12) return completo;
+  let tl = [0, 0, 1e9], tr = [0, 0, -1e9], br = [0, 0, -1e9], bl = [0, 0, 1e9];
+  for (let i = 0; i < n; i++) if (lab[i] === mejor) { const px = i % w, py = (i / w) | 0, a = px + py, b = px - py; if (a < tl[2]) tl = [px, py, a]; if (a > br[2]) br = [px, py, a]; if (b > tr[2]) tr = [px, py, b]; if (b < bl[2]) bl = [px, py, b]; }
+  // Correr las esquinas un poco hacia adentro para no arrastrar la mesa en los bordes
+  const cx = (tl[0] + tr[0] + br[0] + bl[0]) / 4, cy = (tl[1] + tr[1] + br[1] + bl[1]) / 4;
+  const q = [tl, tr, br, bl].map(([px, py]) => { px += Math.sign(cx - px) * 0.8; py += Math.sign(cy - py) * 0.8; return [Math.min(1, Math.max(0, (px + 0.5) / w)), Math.min(1, Math.max(0, (py + 0.5) / h))]; });
+  // Si el papel ocupa casi toda la foto, no recortar
+  if (areaQuad(q) > 0.93) return completo;
+  return q;
+}
+function areaQuad(q) { let a = 0; for (let i = 0; i < 4; i++) { const [x1, y1] = q[i], [x2, y2] = q[(i + 1) % 4]; a += x1 * y2 - x2 * y1; } return Math.abs(a) / 2; }
+// Homografía que lleva el rectángulo (0..W,0..H) al cuadrilátero q (en píxeles)
+function homografia(W, H, q) {
+  const src = [[0, 0], [W, 0], [W, H], [0, H]], A = [], B = [];
+  for (let i = 0; i < 4; i++) { const [x, y] = src[i], [u, v] = q[i]; A.push([x, y, 1, 0, 0, 0, -u * x, -u * y]); B.push(u); A.push([0, 0, 0, x, y, 1, -v * x, -v * y]); B.push(v); }
+  for (let c = 0; c < 8; c++) { let p = c; for (let r = c + 1; r < 8; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r; [A[c], A[p]] = [A[p], A[c]]; [B[c], B[p]] = [B[p], B[c]]; for (let r = 0; r < 8; r++) if (r !== c) { const f = A[r][c] / A[c][c]; for (let k = c; k < 8; k++) A[r][k] -= f * A[c][k]; B[r] -= f * B[c]; } }
+  return B.map((b, i) => b / A[i][i]);
+}
+// Endereza el cuadrilátero y aplica el filtro. modo: 'doc' (gris limpio), 'color' (color limpio), 'orig'
+function escanear(im, quad, modo) {
+  const IW = im.width, IH = im.height, q = quad.map(([x, y]) => [x * IW, y * IH]), dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  let W = Math.max(dist(q[0], q[1]), dist(q[3], q[2])), H = Math.max(dist(q[0], q[3]), dist(q[1], q[2]));
+  const k = Math.min(1, 1600 / Math.max(W, H)); W = Math.max(16, Math.round(W * k)); H = Math.max(16, Math.round(H * k));
+  const sc = lienzo(IW, IH), sx = sc.getContext('2d', { willReadFrequently: true }); sx.drawImage(im, 0, 0);
+  const S = sx.getImageData(0, 0, IW, IH).data, out = lienzo(W, H), ox = out.getContext('2d'), O = ox.createImageData(W, H), D = O.data;
+  const [a, b, c, d, e, f, g, h] = homografia(W, H, q);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const z = g * x + h * y + 1, u = (a * x + b * y + c) / z, v = (d * x + e * y + f) / z;
+    const x0 = Math.max(0, Math.min(IW - 2, Math.floor(u))), y0 = Math.max(0, Math.min(IH - 2, Math.floor(v))), fx = Math.min(1, Math.max(0, u - x0)), fy = Math.min(1, Math.max(0, v - y0));
+    const i00 = (y0 * IW + x0) * 4, i10 = i00 + 4, i01 = i00 + IW * 4, i11 = i01 + 4, o = (y * W + x) * 4;
+    for (let ch = 0; ch < 3; ch++) D[o + ch] = (S[i00 + ch] * (1 - fx) + S[i10 + ch] * fx) * (1 - fy) + (S[i01 + ch] * (1 - fx) + S[i11 + ch] * fx) * fy;
+    D[o + 3] = 255;
+  }
+  if (modo !== 'orig') filtroDocumento(D, W, H, modo === 'color');
+  ox.putImageData(O, 0, 0);
+  return out;
+}
+// Quita sombras e iluminación desigual (divide por el fondo estimado) y deja el papel blanco
+function filtroDocumento(D, W, H, color) {
+  const n = W * H, L = new Float32Array(n);
+  for (let i = 0; i < n; i++) L[i] = 0.299 * D[i * 4] + 0.587 * D[i * 4 + 1] + 0.114 * D[i * 4 + 2];
+  // Fondo: reducir, máximo local (borra el texto) y suavizar
+  const f = Math.max(4, Math.round(Math.max(W, H) / 120)), bw = Math.ceil(W / f), bh = Math.ceil(H / f), Bm = new Float32Array(bw * bh);
+  for (let by = 0; by < bh; by++) for (let bx = 0; bx < bw; bx++) { let mx = 0; for (let y = by * f; y < Math.min(H, by * f + f); y++) for (let x = bx * f; x < Math.min(W, bx * f + f); x++) { const v = L[y * W + x]; if (v > mx) mx = v; } Bm[by * bw + bx] = mx; }
+  const dil = (A, r) => { const R = new Float32Array(A.length); for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) { let mx = 0; for (let yy = Math.max(0, y - r); yy <= Math.min(bh - 1, y + r); yy++) for (let xx = Math.max(0, x - r); xx <= Math.min(bw - 1, x + r); xx++) if (A[yy * bw + xx] > mx) mx = A[yy * bw + xx]; R[y * bw + x] = mx; } return R; };
+  const blur = (A, r) => { let R = new Float32Array(A.length); for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) { let s = 0, c = 0; for (let xx = Math.max(0, x - r); xx <= Math.min(bw - 1, x + r); xx++) { s += A[y * bw + xx]; c++; } R[y * bw + x] = s / c; } const R2 = new Float32Array(A.length); for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) { let s = 0, c = 0; for (let yy = Math.max(0, y - r); yy <= Math.min(bh - 1, y + r); yy++) { s += R[yy * bw + x]; c++; } R2[y * bw + x] = s / c; } return R2; };
+  const Bg = blur(dil(Bm, 2), 3);
+  const fondo = (x, y) => { const gx = Math.min(bw - 1, Math.max(0, x / f - 0.5)), gy = Math.min(bh - 1, Math.max(0, y / f - 0.5)), x0 = Math.floor(gx), y0 = Math.floor(gy), x1 = Math.min(bw - 1, x0 + 1), y1 = Math.min(bh - 1, y0 + 1), fx = gx - x0, fy = gy - y0; return (Bg[y0 * bw + x0] * (1 - fx) + Bg[y0 * bw + x1] * fx) * (1 - fy) + (Bg[y1 * bw + x0] * (1 - fx) + Bg[y1 * bw + x1] * fx) * fy; };
+  // Normalizar y fijar el punto negro con el percentil 2 de la tinta
+  const N = new Float32Array(n), hist = new Uint32Array(256);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const i = y * W + x, bgv = Math.max(40, fondo(x, y)), v = Math.min(1, L[i] / bgv); N[i] = v; hist[Math.round(v * 255)]++; }
+  let acc = 0, negro = 0; for (let i = 0; i < 256; i++) { acc += hist[i]; if (acc > n * 0.02) { negro = i / 255; break; } }
+  negro = Math.min(negro, 0.6); const blanco = 0.9;
+  const curva = v => { let t = (v - negro) / (blanco - negro); t = Math.min(1, Math.max(0, t)); return Math.pow(t, 1.35); };
+  // Color del papel (para que quede blanco y no amarillo)
+  const papel = [0, 0, 0]; let np = 0; for (let i = 0; i < n; i += 7) if (N[i] > 0.85) { papel[0] += D[i * 4]; papel[1] += D[i * 4 + 1]; papel[2] += D[i * 4 + 2]; np++; }
+  if (np) { const m = (papel[0] + papel[1] + papel[2]) / 3; for (let ch = 0; ch < 3; ch++) papel[ch] = Math.max(1, papel[ch] / m * 255); } else papel.fill(255);
+  for (let i = 0; i < n; i++) {
+    const t = curva(N[i]), o = i * 4;
+    if (color) { for (let ch = 0; ch < 3; ch++) { const cv = D[o + ch] / papel[ch] * 255 / Math.max(40, L[i] / Math.max(N[i], 1e-3)); D[o + ch] = Math.max(0, Math.min(255, (t + (cv - N[i]) * 1.2) * 255)); } }
+    else { const v = Math.round(t * 255); D[o] = D[o + 1] = D[o + 2] = v; }
+  }
+}
+
+// Pantalla para revisar el escaneo, cambiar el filtro o ajustar el recorte. Devuelve el dataURL final o null si se cancela.
+function abrirEscaner(file) {
+  return new Promise(async (fin, falla) => {
+    let src, im;
+    try { src = await leerArchivo(file); im = await cargarImagen(src); } catch (e) { return falla(e); }
+    let modo = 'doc'; try { modo = localStorage.getItem('scan:modo') || 'doc'; } catch {}
+    const auto = detectarBordes(im); let quad = auto.map(p => [...p]), vista = 'res', resultado = null;
+    const cont = document.createElement('div'); cont.className = 'scan-back'; document.body.appendChild(cont);
+    const cerrar = v => { cont.remove(); fin(v); };
+    const exportar = () => {
+      if (modo === 'orig') { const k = Math.min(1, 1600 / Math.max(im.width, im.height)), c = lienzo(Math.round(im.width * k), Math.round(im.height * k)); c.getContext('2d').drawImage(im, 0, 0, c.width, c.height); return c.toDataURL('image/jpeg', 0.75); }
+      return escanear(im, quad, modo).toDataURL('image/jpeg', modo === 'doc' ? 0.8 : 0.78);
+    };
+    const pintar = () => {
+      if (vista === 'res') {
+        cont.innerHTML = `<div class="scan"><div class="scan-head"><b>Revisar factura</b><button class="x" data-s="cancelar" aria-label="Cancelar">×</button></div>
+          <div class="scan-stage"><div class="scan-wait"><span class="spin"></span> Procesando…</div><img id="scan-img" alt="Factura escaneada" hidden></div>
+          <div class="seg scan-seg">${[['doc', 'Documento'], ['color', 'Color'], ['orig', 'Original']].map(([k, l]) => `<button data-s="modo" data-v="${k}" aria-pressed="${modo === k}">${l}</button>`).join('')}</div>
+          <div class="scan-foot"><button class="btn" data-s="recorte" ${modo === 'orig' ? 'disabled' : ''}>✂️ Ajustar recorte</button><button class="btn primary" data-s="usar">Usar esta foto</button></div></div>`;
+        setTimeout(() => { resultado = exportar(); const i = cont.querySelector('#scan-img'); if (!i) return; i.onload = () => { i.hidden = false; const w = cont.querySelector('.scan-wait'); if (w) w.remove(); }; i.src = resultado; }, 30);
+      } else {
+        cont.innerHTML = `<div class="scan"><div class="scan-head"><b>Ajustar recorte</b><button class="x" data-s="volver" aria-label="Volver">×</button></div>
+          <p class="scan-tip">Arrastre las cuatro esquinas a las puntas de la factura.</p>
+          <div class="scan-stage"><div class="scan-crop"><img src="${src}" alt="Foto original"><svg viewBox="0 0 1000 1000" preserveAspectRatio="none"><polygon id="scan-poly"/></svg>${[0, 1, 2, 3].map(i => `<span class="scan-h" data-h="${i}"></span>`).join('')}</div></div>
+          <div class="scan-foot"><button class="btn" data-s="auto">Automático</button><button class="btn" data-s="toda">Toda la foto</button><button class="btn primary" data-s="aplicar">Aplicar</button></div></div>`;
+        const caja = cont.querySelector('.scan-crop'), ar = im.width / im.height, st = cont.querySelector('.scan-stage');
+        const ajustar = () => { const W = st.clientWidth, H = st.clientHeight; let w = W, h = W / ar; if (h > H) { h = H; w = H * ar; } caja.style.width = w + 'px'; caja.style.height = h + 'px'; };
+        ajustar();
+        const dibujar = () => { cont.querySelector('#scan-poly').setAttribute('points', quad.map(([x, y]) => `${x * 1000},${y * 1000}`).join(' ')); cont.querySelectorAll('.scan-h').forEach(h => { const [x, y] = quad[+h.dataset.h]; h.style.left = x * 100 + '%'; h.style.top = y * 100 + '%'; }); };
+        dibujar();
+        cont.querySelectorAll('.scan-h').forEach(h => h.addEventListener('pointerdown', ev => {
+          ev.preventDefault(); h.setPointerCapture(ev.pointerId); const i = +h.dataset.h;
+          const mover = e => { const r = caja.getBoundingClientRect(); quad[i] = [Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))]; dibujar(); };
+          const soltar = () => { h.removeEventListener('pointermove', mover); h.removeEventListener('pointerup', soltar); h.removeEventListener('pointercancel', soltar); };
+          h.addEventListener('pointermove', mover); h.addEventListener('pointerup', soltar); h.addEventListener('pointercancel', soltar);
+        }));
+        cont._dibujar = dibujar;
+      }
+    };
+    cont.addEventListener('click', e => {
+      const b = e.target.closest('[data-s]'); if (!b) return; const s = b.dataset.s;
+      if (s === 'cancelar') cerrar(null);
+      else if (s === 'modo') { modo = b.dataset.v; try { localStorage.setItem('scan:modo', modo); } catch {} pintar(); }
+      else if (s === 'usar') cerrar(resultado || exportar());
+      else if (s === 'recorte') { vista = 'crop'; pintar(); }
+      else if (s === 'volver') { vista = 'res'; pintar(); }
+      else if (s === 'auto') { quad = auto.map(p => [...p]); cont._dibujar(); }
+      else if (s === 'toda') { quad = [[0, 0], [1, 0], [1, 1], [0, 1]]; cont._dibujar(); }
+      else if (s === 'aplicar') { vista = 'res'; if (modo === 'orig') modo = 'doc'; pintar(); }
+    });
+    pintar();
+  });
+}
+
 function comprimirFoto(file) {
   return new Promise((res, rej) => {
     const r = new FileReader();
@@ -1999,7 +2143,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '35 (26/11/2026)';
+const APP_VERSION = '36 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
@@ -2543,7 +2687,7 @@ document.addEventListener('change', async e => {
   if (el.dataset.vf && tab === 'legal') { const { L, html } = foHTML(vistaAbierta(viaje())); $('.fo-wrap').innerHTML = html; const n = $('#main .note'); if (n) { n.textContent = L.aviso; n.classList.toggle('ok', L.ok); } }
   else if (el.dataset.vf && el.type === 'date') { const y = window.scrollY; render(); window.scrollTo(0, y); }
   if ((el.id === 'g-file' || el.id === 'g-galeria') && el.files[0]) {
-    try { leerFormGasto(); fotoTmp = await comprimirFoto(el.files[0]); editando.foto = true; pintarGasto(); if (iaLista() && IA.auto) aplicarIA(fotoTmp); }
+    try { leerFormGasto(); const f = el.files[0]; el.value = ''; const r = await abrirEscaner(f); if (!r || !editando) return; fotoTmp = r; editando.foto = true; pintarGasto(); if (iaLista() && IA.auto) aplicarIA(fotoTmp); }
     catch { toast('No se pudo leer la imagen'); }
   }
   if (el.id === 'g-sub' && editando) editando.sub = el.value;
