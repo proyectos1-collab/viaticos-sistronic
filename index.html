@@ -1256,6 +1256,7 @@ async function guardarGasto(otro, forzar) {
   if (fotoTmp === null) { await DB.del('foto:' + g.id); g.foto = false; }
   else if (fotoTmp) { await DB.set('foto:' + g.id, fotoTmp); g.foto = true; g.fotoV = Date.now(); (await metaSync()).fv[g.id] = g.fotoV; }
   registrarProveedor(g, g._tercero);
+  if (g.nit) { const nitG = g.nit; setTimeout(() => enriquecerProveedores(nitG).catch(() => {}), 500); }
   const limpio = { ...g }; delete limpio._nuevo; delete limpio._ia; delete limpio._iaErr; delete limpio._tercero;
   const i = v.gastos.findIndex(x => x.id === g.id);
   if (i >= 0) v.gastos[i] = limpio; else v.gastos.push(limpio);
@@ -2163,7 +2164,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '31 (26/11/2026)';
+const APP_VERSION = '32 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
@@ -2354,6 +2355,53 @@ function buscarProv(nombre, nit) {
   return Object.values(P).find(p => normFact(p.comercial) === n || normFact(p.razon) === n || (p.alias || []).includes(n)) || null;
 }
 /* Crea o completa el proveedor de un gasto. t = datos leídos por la IA (opcional). */
+/* ---------- Consulta de empresas en el RUES (datos abiertos de las Cámaras de Comercio en datos.gov.co, gratis y sin clave) ---------- */
+const RUES_URL = 'https://www.datos.gov.co/resource/c82u-588k.json';
+const ruesCache = {};
+const tituloCiudad = t => String(t || '').toLowerCase().replace(/(^|\s)\S/g, m => m.toUpperCase());
+async function consultarRUES(nit) {
+  nit = soloDig(nit); if (nit.length < 6) return null;
+  if (nit in ruesCache) return ruesCache[nit];
+  const w = `nit='${nit}' OR numero_identificacion='${nit}'`;
+  const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 12000);
+  try {
+    const r = await fetch(`${RUES_URL}?$where=${encodeURIComponent(w)}&$limit=20`, { signal: ctl.signal });
+    if (!r.ok) throw new Error('El RUES respondió ' + r.status);
+    const l = await r.json();
+    const peso = x => (x.estado_matricula === 'ACTIVA' ? 4 : 0) + (/^0[01]$/.test(x.codigo_categoria_matricula || '') ? 2 : 0);
+    l.sort((a, b) => peso(b) - peso(a) || String(b.fecha_renovacion || b.fecha_matricula || '').localeCompare(String(a.fecha_renovacion || a.fecha_matricula || '')));
+    const x = l[0];
+    if (!x) return (ruesCache[nit] = false);
+    const camara = tituloCiudad(x.camara_comercio), dane = daneDe(camara);
+    const persona = /PERSONA NATURAL/i.test(x.organizacion_juridica || '');
+    return (ruesCache[nit] = {
+      razon: (x.razon_social || '').trim(), dv: x.digito_verificacion || '', estado: x.estado_matricula || '', camara,
+      ciudad: dane ? camara : '', dane: dane || '', ciiu: x.cod_ciiu_act_econ_pri || '', persona,
+      tipo: persona ? 'Es persona' : 'Empresa', tipoId: persona ? '13' : '31', renovado: x.ultimo_ano_renovado || '', organizacion: tituloCiudad(x.organizacion_juridica)
+    });
+  } catch (e) { throw new Error(e.name === 'AbortError' ? 'El RUES no respondió a tiempo' : 'No se pudo consultar el RUES (revise su conexión)'); }
+  finally { clearTimeout(to); }
+}
+const ruesResumen = d => `<b>${esc(d.razon)}</b> · ${d.estado === 'ACTIVA' ? '✔ Matrícula activa' : '⚠ Matrícula ' + esc((d.estado || 'sin estado').toLowerCase())}${d.renovado && d.renovado !== '0' ? ' (renovada ' + esc(d.renovado) + ')' : ''} · Cámara de Comercio de ${esc(d.camara)}${d.ciiu ? ' · CIIU ' + esc(d.ciiu) : ''}`;
+/* Completa un proveedor con los datos del RUES sin pisar lo que el usuario escribió a mano */
+function aplicarRUES(p, d) {
+  if (!d) return;
+  const manual = p.origen === 'manual';
+  if (d.razon && (!manual || !p.razon)) { if (!p.comercial && p.razon && normFact(p.razon) !== normFact(d.razon)) p.comercial = p.razon; p.razon = d.razon; }
+  if (d.ciudad && !p.ciudad) p.ciudad = d.ciudad;
+  if (d.dane && !p.dane) p.dane = d.dane;
+  if (!manual) { p.tipo = d.tipo; p.tipoId = d.tipoId; }
+  p.rues = { estado: d.estado, camara: d.camara, ciiu: d.ciiu, renovado: d.renovado, fecha: todayISO() };
+}
+async function enriquecerProveedores(soloNit) {
+  const P = provs(); let n = 0;
+  for (const p of Object.values(P)) {
+    if (!p.nit || (soloNit && p.nit !== soloDig(soloNit)) || (p.rues && !soloNit)) continue;
+    try { const d = await consultarRUES(p.nit); if (d) { aplicarRUES(p, d); n++; } else if (d === false) p.rues = { estado: 'NO ENCONTRADO', fecha: todayISO() }; } catch { break; }
+  }
+  if (n) await guardar();
+  return n;
+}
 function registrarProveedor(g, t) {
   const P = provs(), nombre = (g.proveedor || '').trim();
   if (!nombre && !(t && t.nit)) return;
@@ -2361,7 +2409,7 @@ function registrarProveedor(g, t) {
   const nit = (t && t.nit) || soloDig(g.nit);
   let p = buscarProv(nombre, nit);
   if (p && nit && !p.nit) { delete P[claveProv('', p.comercial || p.razon)]; p.nit = nit; }
-  if (!p) { p = { nit: nit || '', tipoId: '31', tipo: 'Empresa', razon: g.razon || nombre, comercial: '', direccion: '', ciudad: '', depto: '', dane: '', telefono: '', correo: '', regimen: '', resp: 'R-99-PN', alias: [], origen: t ? 'ia' : 'auto', creado: new Date().toISOString() }; }
+  if (!p) { p = { nit: nit || '', tipoId: '31', tipo: 'Empresa', razon: g.razon || nombre, comercial: g.razon && nombre && normFact(g.razon) !== normFact(nombre) ? nombre : '', direccion: '', ciudad: '', depto: '', dane: '', telefono: '', correo: '', regimen: '', resp: 'R-99-PN', alias: [], origen: t ? 'ia' : 'auto', creado: new Date().toISOString() }; }
   if (t) for (const k of ['tipoId', 'tipo', 'razon', 'comercial', 'direccion', 'ciudad', 'depto', 'dane', 'telefono', 'correo', 'regimen']) if (t[k] && (!p[k] || p.origen !== 'manual')) p[k] = t[k];
   const n = normFact(nombre); if (n && !(p.alias || []).includes(n)) (p.alias = p.alias || []).push(n);
   if (g.razon && (!p.razon || p.razon === nombre) && p.origen !== 'manual') p.razon = g.razon;
@@ -2382,6 +2430,7 @@ function vProveedores() {
   <div class="card form">
     <p class="hint" style="margin:0">Se crean solos con cada factura. Cuando Gemini lee la factura, llena el NIT, la dirección, la ciudad y el régimen. Toque un proveedor para revisarlo.${sinNit ? ` <b>${sinNit} sin NIT</b> (no se incluyen en el archivo de Siigo hasta completarlos).` : ''}</p>
     <div class="row"><button class="btn primary" data-act="siigo-xlsx">Descargar terceros para Siigo</button><button class="btn" data-act="prov-nuevo">Agregar proveedor</button></div>
+    ${L.some(p => p.nit && !p.rues) ? `<div class="row"><button class="btn" data-act="rues-todos">🔎 Completar con el RUES (${L.filter(p => p.nit && !p.rues).length})</button></div>` : ''}
   </div>
   ${L.length ? `<div class="list" style="margin-top:8px">${L.map(p => `<button class="item" data-act="prov-edit" data-k="${esc(p.k)}"><span class="t">${esc(p.comercial || p.razon || '—')}</span><span class="a">${p.nit ? '<span class="chip st-LEGALIZADO">NIT ' + esc(p.nit) + '-' + dvNIT(p.nit) + '</span>' : '<span class="chip st-PENDIENTE">FALTA NIT</span>'}</span><span class="s">${esc([p.comercial && p.razon !== p.comercial ? p.razon : '', p.ciudad, p.regimen ? (p.regimen[0] === '2' ? 'Responsable de IVA' : 'No responsable de IVA') : ''].filter(Boolean).join(' · ') || 'Sin datos adicionales')}</span></button>`).join('')}</div>` : '<div class="empty">Todavía no hay proveedores.</div>'}`;
 }
@@ -2399,9 +2448,35 @@ function abrirProveedor(k) {
     <div class="grid2">${f('ciudad', 'Ciudad', p.ciudad)}${f('dane', 'Código DANE ciudad (5 dígitos)', p.dane, 'inputmode="numeric" maxlength="5"')}</div>
     <div class="grid2">${f('telefono', 'Teléfono', p.telefono, 'inputmode="tel"')}${f('correo', 'Correo', p.correo, 'inputmode="email" autocapitalize="off"')}</div>
     <div class="grid2">${sel('regimen', 'Régimen de IVA', [['', '—'], ['0 - No responsable de IVA', 'No responsable de IVA'], ['2 - Responsable de IVA', 'Responsable de IVA']], p.regimen)}${sel('resp', 'Responsabilidad fiscal', ['O-13', 'O-15', 'O-23', 'O-47', 'R-99-PN'].map(x => [x, x]), p.resp || 'R-99-PN')}</div>
-    <div class="row"><button class="btn primary" type="submit">Guardar</button><button class="btn" type="button" data-act="dian">Verificar en la DIAN</button></div>
+    <div id="pv-rues">${p.rues && p.rues.estado ? `<div class="note ${p.rues.estado === 'ACTIVA' ? 'ok' : ''}">RUES: ${p.rues.estado === 'NO ENCONTRADO' ? 'no aparece en el registro de las Cámaras de Comercio' : `${p.rues.estado === 'ACTIVA' ? '✔ matrícula activa' : '⚠ matrícula ' + esc(p.rues.estado.toLowerCase())} · Cámara de ${esc(p.rues.camara || '')}${p.rues.ciiu ? ' · CIIU ' + esc(p.rues.ciiu) : ''}`} (consultado ${fmtFecha(p.rues.fecha)})</div>` : ''}</div>
+    <div class="row"><button class="btn primary" type="submit">Guardar</button><button class="btn" type="button" data-act="rues-pv">🔎 Buscar en el RUES</button><button class="btn" type="button" data-act="dian">Verificar en la DIAN</button></div>
     ${k ? '<div id="pv-del"><button type="button" class="btn danger block" data-act="prov-del">Eliminar proveedor</button></div>' : ''}
   </div></form></div>`;
+}
+async function buscarRUESProveedor(avisar) {
+  const nit = soloDig(($('#pv-nit') || {}).value), box = $('#pv-rues'); if (!box) return;
+  if (nit.length < 6) { if (avisar) box.innerHTML = '<div class="note">Escriba el NIT o la cédula para buscar.</div>'; return; }
+  box.innerHTML = '<div class="note ia-busy"><span class="spin"></span> <span class="txt">Buscando en el RUES…</span></div>';
+  try {
+    const d = await consultarRUES(nit);
+    if (soloDig(($('#pv-nit') || {}).value) !== nit) return;
+    if (!d) { box.innerHTML = '<div class="note">No aparece en el RUES (registro de las Cámaras de Comercio). Si es persona natural sin matrícula mercantil, llénelo a mano o verifique en la DIAN.</div>'; return; }
+    const put = (id, v, siempre) => { const el = $('#pv-' + id); if (el && v && (siempre || !el.value.trim())) el.value = v; };
+    const r = $('#pv-razon'), com = $('#pv-comercial');
+    if (r && r.value.trim() && normFact(r.value) !== normFact(d.razon) && com && !com.value.trim()) com.value = r.value.trim();
+    put('razon', d.razon, true); put('ciudad', d.ciudad); put('dane', d.dane); put('tipo', d.tipo, true); put('tipoId', d.tipoId, true);
+    provEdit.rues = { estado: d.estado, camara: d.camara, ciiu: d.ciiu, renovado: d.renovado, fecha: todayISO() };
+    box.innerHTML = `<div class="note ${d.estado === 'ACTIVA' ? 'ok' : ''}">RUES: ${ruesResumen(d)}.<br>Se llenaron la razón social${d.ciudad ? ', la ciudad' : ''} y el tipo. La dirección y el teléfono no vienen en el RUES: los toma la IA de la factura.</div>`;
+  } catch (e) { box.innerHTML = `<div class="note">⚠ ${esc(e.message)}</div>`; }
+}
+/* En el formulario del gasto: al escribir el NIT, trae la razón social del RUES si está vacía */
+async function ruesEnGasto() {
+  const nit = soloDig(($('#g-nit') || {}).value), box = $('#g-nitchk'); if (!box || nit.length < 8) return;
+  try {
+    const d = await consultarRUES(nit); if (!d || soloDig(($('#g-nit') || {}).value) !== nit) return;
+    const r = $('#g-razon'); if (r && !r.value.trim()) { r.value = d.razon; if (editando) editando.razon = d.razon; }
+    box.insertAdjacentHTML('beforeend', `<div class="hint" style="margin-top:4px">RUES: ${ruesResumen(d)}</div>`);
+  } catch {}
 }
 async function guardarProveedor() {
   const P = provs(), p = provEdit, val = id => ($('#pv-' + id) || {}).value || '';
@@ -2545,6 +2620,8 @@ document.addEventListener('click', async e => {
       if (!t.dataset.ok) { t.dataset.ok = '1'; t.textContent = '¿Seguro? Toque otra vez'; t.classList.add('danger'); break; }
       const v = viaje(), k = cortesDe(v).find(x => x.id === t.dataset.corte); v.gastos.forEach(g => { if (g.corte === k.id) delete g.corte; }); v.cortes = v.cortes.filter(x => x.id !== k.id); await guardar(); render(); toast('Corte deshecho: sus gastos vuelven a quedar abiertos'); break;
     }
+    case 'rues-pv': buscarRUESProveedor(true); break;
+    case 'rues-todos': { t.disabled = true; t.textContent = 'Consultando el RUES…'; const n = await enriquecerProveedores(); toast(n ? `${n} proveedor(es) completados con el RUES` : 'No hubo proveedores nuevos para completar'); render(); break; }
     case 'siigo-xlsx': try { await exportarSiigo(); } catch (err) { toast('No se pudo generar el archivo: ' + err.message); } break;
     case 'prov-nuevo': abrirProveedor(''); break;
     case 'prov-edit': abrirProveedor(t.dataset.k); break;
@@ -2606,6 +2683,8 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('change', async e => {
   const el = e.target;
+  if (el.id === 'pv-nit') buscarRUESProveedor(false);
+  if (el.id === 'g-nit') ruesEnGasto();
   if (el.dataset.vf && tab === 'legal') { const { L, html } = foHTML(vistaAbierta(viaje())); $('.fo-wrap').innerHTML = html; const n = $('#main .note'); if (n) { n.textContent = L.aviso; n.classList.toggle('ok', L.ok); } }
   else if (el.dataset.vf && el.type === 'date') { const y = window.scrollY; render(); window.scrollTo(0, y); }
   if ((el.id === 'g-file' || el.id === 'g-galeria') && el.files[0]) {
