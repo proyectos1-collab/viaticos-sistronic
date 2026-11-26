@@ -96,6 +96,33 @@ function resumenPorOS(v) {
   for (const g of conValor(v)) { const k = g.os || ''; const o = m.get(k) || { os: k, cliente: g.osCliente || osClientes()[k] || '', n: 0, emp: 0, sis: 0 }; o.n++; if (g.pagadoPor === 'Sistronic') o.sis += Number(g.valor) || 0; else o.emp += Number(g.valor) || 0; m.set(k, o); }
   return [...m.values()].sort((a, b) => String(a.os).localeCompare(String(b.os), 'es', { numeric: true }));
 }
+/* Anticipos: puede haber varios y cada uno dice a dónde se consignó. v.anticipo sigue siendo el total (lo usan todos los cálculos). */
+const DEST_ANT = { empleado: ['💳', 'Cuenta del empleado'], tarjeta: ['🛠️', 'Tarjeta de ingeniería'] };
+function anticiposDe(v) {
+  if (!Array.isArray(v.anticipos)) v.anticipos = Number(v.anticipo) > 0 ? [{ id: uid(), fecha: v.inicio || todayISO(), valor: Number(v.anticipo) || 0, destino: 'empleado', nota: '' }] : [];
+  return v.anticipos;
+}
+function totalesAnticipo(v) {
+  const l = anticiposDe(v), t = { total: 0, empleado: 0, tarjeta: 0, n: l.length };
+  for (const a of l) { const x = Number(a.valor) || 0; t.total += x; t[a.destino === 'tarjeta' ? 'tarjeta' : 'empleado'] += x; }
+  return t;
+}
+const sincAnticipo = v => { v.anticipo = totalesAnticipo(v).total; };
+let antQuitando = '';
+function vAnticipos(v) {
+  const l = anticiposDe(v);
+  return `<div class="field ant-box"><span>Anticipos recibidos</span>
+    ${l.length ? l.map((a, i) => `<div class="ant-item" data-id="${a.id}">
+      <div class="ant-top"><b>Anticipo ${i + 1}</b><button type="button" class="btn ${antQuitando === a.id ? 'danger' : ''} ant-del" data-act="ant-quitar" data-id="${a.id}">${antQuitando === a.id ? '¿Quitar? Toque otra vez' : 'Quitar'}</button></div>
+      <div class="grid2"><label class="field"><span>Fecha</span><input type="date" data-ant="fecha" data-id="${a.id}" value="${esc(a.fecha || '')}"></label>
+      <label class="field"><span>Valor</span><input inputmode="numeric" data-money data-ant="valor" data-id="${a.id}" value="${Number(a.valor || 0).toLocaleString('es-CO')}"></label></div>
+      <div class="seg" role="group">${Object.entries(DEST_ANT).map(([k, [ic, tx]]) => `<button type="button" data-act="ant-destino" data-id="${a.id}" data-d="${k}" aria-pressed="${(a.destino || 'empleado') === k}">${ic} ${tx}</button>`).join('')}</div>
+      <input class="ant-nota" data-ant="nota" data-id="${a.id}" value="${esc(a.nota || '')}" placeholder="Nota (opcional): ej. consignación Bancolombia">
+    </div>`).join('') : '<div class="note" style="margin:0">Todavía no hay anticipos.</div>'}
+    <button type="button" class="btn block" data-act="ant-agregar">+ Agregar anticipo</button>
+    <div class="ant-tot" id="ant-tot">${vAntTot(v)}</div></div>`;
+}
+function vAntTot(v) { const t = totalesAnticipo(v); return `<div><span>Total anticipos</span><b class="num">${fmtCOP(t.total)}</b></div><div><span>💳 Cuenta del empleado</span><b class="num">${fmtCOP(t.empleado)}</b></div><div><span>🛠️ Tarjeta de ingeniería</span><b class="num">${fmtCOP(t.tarjeta)}</b></div>`; }
 let vistaGastos = 'fecha';
 function nuevoGasto(arr) {
   const [fecha, concepto, sub, proveedor, desc, valor, pagadoPor, factura, soporte, obs] = arr;
@@ -717,10 +744,8 @@ function vViaje(v) {
     <div class="grid2">${sv ? f('cot', 'COT / Orden de compra', 'text', 'readonly') + f('os', 'OS No.', 'text', 'readonly') : f('cot', 'COT / Orden de compra') + f('os', 'OS No.')}</div>
     ${sv ? vOSResumen(v) : ''}
     <div class="grid2">${f('inicio', 'Fecha inicio', 'date')}${f('fin', 'Fecha fin', 'date')}</div>
-    <div class="grid2">
-      <label class="field"><span>Anticipo recibido</span><input id="vj-anticipo" inputmode="numeric" data-vf="anticipo" data-money value="${Number(v.anticipo || 0).toLocaleString('es-CO')}"></label>
-      <div class="field"><span>Días del servicio</span><div class="num" style="padding:10px 2px;font-weight:700">${diasServicio(v)}</div></div>
-    </div>
+    ${vAnticipos(v)}
+    <div class="field"><span>Días del servicio</span><div class="num" style="padding:4px 2px;font-weight:700">${diasServicio(v)}</div></div>
   </div>
   <h2>Archivos</h2>
   <div class="card form">
@@ -1659,8 +1684,8 @@ function hojaXML(xml) {
     r.insertBefore(c, sig || null); celdas.set(ref, c);
     return c;
   }
-  function set(ref, val, keepFormula) {
-    const c = celda(ref); fijadas.add(ref);
+  function set(ref, val, keepFormula, estilo) {
+    const c = celda(ref); fijadas.add(ref); if (estilo != null) c.setAttribute('s', String(estilo));
     const f = keepFormula && !SOLO_VALORES ? c.getElementsByTagNameNS(NS_MAIN, 'f')[0] : null;
     while (c.firstChild) c.removeChild(c.firstChild);
     c.removeAttribute('t');
@@ -1789,6 +1814,16 @@ async function exportarExcel(soloGenerar, vx) {
     h2.set('C10', I.gastado); h2.set('D10', totC ? I.gastado / totC : 0);
     h2.set('C11', I.sistronic); h2.set('D11', totC ? I.sistronic / totC : 0);
     h2.set('C12', I.anticipo); h2.set('C13', I.anticipo - I.gastado); h2.set('C14', I.anticipo ? I.gastado / I.anticipo : 0); h2.set('C15', I.pendiente);
+    { // Detalle de anticipos del proyecto (fecha, valor y a dónde se consignó), debajo de la gráfica (filas 15 a 34)
+      const v0a = S.viajes.find(x => x.id === v.id) || v, la = anticiposDe(v0a), ta = totalesAnticipo(v0a);
+      if (la.length) {
+        h2.set('B36', 'ANTICIPOS DEL PROYECTO', false, 26); h2.set('C36', '', false, 26); h2.set('D36', '', false, 26);
+        [['B37', 'Fecha · nota'], ['C37', 'Valor COP'], ['D37', 'Consignado a']].forEach(([r, x]) => h2.set(r, x, false, 27));
+        la.forEach((a, i) => { const r = 38 + i; h2.set('B' + r, (a.fecha ? fmtFecha(a.fecha) : '') + (a.nota ? ' · ' + a.nota : ''), false, 2); h2.set('C' + r, Number(a.valor) || 0, false, 28); h2.set('D' + r, a.destino === 'tarjeta' ? 'Tarjeta ingeniería' : 'Cuenta empleado', false, 2); });
+        const r = 38 + la.length;
+        [['Total cuenta del empleado', ta.empleado], ['Total tarjeta de ingeniería', ta.tarjeta], ['TOTAL ANTICIPOS', ta.total]].forEach(([k, x], i) => { h2.set('B' + (r + i), k, false, i === 2 ? 49 : 52); h2.set('C' + (r + i), x, false, i === 2 ? 50 : 53); });
+      }
+    }
     // Concepto / subconcepto
     const ordC = c => { const i = CONC.indexOf(c); return i < 0 ? 99 : i; }, msub = new Map();
     cv.filter(g => g.concepto).forEach(g => { const k = g.concepto + '\u0000' + (g.sub || ''); const o = msub.get(k) || { c: g.concepto, s: g.sub || '', n: 0, t: 0 }; o.n++; o.t += Number(g.valor) || 0; msub.set(k, o); });
@@ -2592,6 +2627,7 @@ function datosFicha(d) {
     tipoLeg: fin ? `Legalización final (${cortesDe(v0).length} cortes)` : k ? `Legalización parcial (${nombreCorte(k)})` : 'Legalización de viáticos',
     servicios: esServ(v0), trabajador: v0.trabajador || '', cedula: v0.cedula || '', email: correoActual(), cliente: v0.cliente || '', cot: v0.cot || '', os: v0.os || '', servicio: v0.servicio || '', ciudad: v0.ciudad || '',
     inicio: v.inicio || '', fin: v.fin || '', enviado: new Date().toISOString(), archivos: [...(d.archivos || []), ...pdfSubidos.map(p => ({ ...p, pdf: true }))], carpetaLink: d.carpetaLink || '', ruta: d.ruta || '' };
+  { const ta = totalesAnticipo(v0); base.anticipos = anticiposDe(v0).map(a => ({ fecha: a.fecha || '', valor: Number(a.valor) || 0, destino: a.destino === 'tarjeta' ? 'tarjeta' : 'empleado', nota: a.nota || '' })); base.antEmpleado = ta.empleado; base.antTarjeta = ta.tarjeta; }
   base.nGastos = conValor(v).length; base.nFotos = v.gastos.filter(g => g.foto).length;
   base.sistronic = sum(conValor(v).filter(g => g.pagadoPor === 'Sistronic'), g => g.valor);
   if (fin) {
@@ -2716,7 +2752,7 @@ function vFichaDetalle(f) {
   <div class="card adm-cab"><div class="row" style="justify-content:space-between;align-items:center;flex-wrap:nowrap"><b>${esc(d.tipoLeg)}</b><span class="chip ${ADM_EST[p.estado][1]}">${ADM_EST[p.estado][0].toUpperCase()}</span></div>
   <div class="adm-quien">${esc(d.trabajador || f.dueño.displayName || '')}<small>${esc(d.email || f.dueño.emailAddress || '')}</small></div>
   <div class="adm-kpis"><div><small>Total legalizado</small><b class="num">${fmtCOP(d.total)}</b></div><div><small>Anticipo</small><b class="num">${fmtCOP(d.anticipo)}</b></div><div><small>${d.saldo >= 0 ? 'Saldo a favor empresa' : 'Saldo a favor trabajador'}</small><b class="num">${fmtCOP(Math.abs(d.saldo))}</b></div></div>
-  <table class="adm-datos">${fila('Proyecto', esc(tituloFicha(d)))}${fila('Servicio', esc(d.servicio && d.servicio !== SERV ? d.servicio : ''))}${fila('Ciudad', esc(d.ciudad))}${fila('Fechas', `${fechaCorta(d.inicio)} a ${fechaCorta(d.fin)}`)}${fila('Gastos', `${d.nGastos} (${d.nFotos} con foto de factura)`)}${fila('Pagado por Sistronic', d.sistronic ? fmtCOP(d.sistronic) : '')}${fila('Enviada', fmtFH(p.enviado) + (Number(p.envios) > 1 ? ` (reenvío ${p.envios})` : ''))}</table></div>`;
+  <table class="adm-datos">${fila('Proyecto', esc(tituloFicha(d)))}${fila('Servicio', esc(d.servicio && d.servicio !== SERV ? d.servicio : ''))}${fila('Ciudad', esc(d.ciudad))}${fila('Fechas', `${fechaCorta(d.inicio)} a ${fechaCorta(d.fin)}`)}${fila('Gastos', `${d.nGastos} (${d.nFotos} con foto de factura)`)}${fila('Pagado por Sistronic', d.sistronic ? fmtCOP(d.sistronic) : '')}${d.anticipos && d.anticipos.length ? fila('Anticipos del proyecto', `${d.anticipos.map(a => `${fechaCorta(a.fecha)} · ${fmtCOP(a.valor)} · ${DEST_ANT[a.destino][0]} ${DEST_ANT[a.destino][1]}${a.nota ? ' (' + esc(a.nota) + ')' : ''}`).join('<br>')}<br><small>💳 Empleado ${fmtCOP(d.antEmpleado)} · 🛠️ Tarjeta ${fmtCOP(d.antTarjeta)}</small>`) : ''}${fila('Enviada', fmtFH(p.enviado) + (Number(p.envios) > 1 ? ` (reenvío ${p.envios})` : ''))}</table></div>`;
   if (p.estado !== 'pendiente') h += `<div class="note ${p.estado === 'aprobado' ? 'ok' : ''}">${p.estado === 'aprobado' ? '✔ Aprobada' : '↩ Devuelta'} el ${fmtFH(p.decididoEn)}${p.decididoPor ? ' por ' + esc(p.decididoPor) : ''}${p.nota ? '<br>Motivo: ' + esc(p.nota) : ''}</div>`;
   const arch = d.archivos || [];
   h += `<div class="row adm-arch">${arch.map((a, i) => a.link ? `<button class="btn" data-act="adm-link" data-i="${i}">${a.pdf ? '📄 PDF de facturas' : arch.filter(x => !x.pdf).length > 1 && /^Resumen/.test(a.nombre) ? '📊 Resumen de cortes' : '📊 Excel de legalización'}</button>` : '').join('')}${d.carpetaLink ? `<button class="btn" data-act="adm-link" data-i="carpeta">📁 Carpeta</button>` : ''}</div>`;
@@ -2785,7 +2821,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '53 (26/11/2026)';
+const APP_VERSION = '54 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
@@ -3255,6 +3291,9 @@ document.addEventListener('click', async e => {
     case 'drive-backup': subirDrive('backup'); break;
     case 'aprob-agregar': { const c = ($('#aprob-nuevo')?.value || '').trim().toLowerCase(); if (!correoValido(c)) { toast('Escriba un correo válido'); break; } if (c === ADMIN_CORREO || listaAprob().includes(c)) { toast('Ese correo ya aprueba'); break; } guardarAprobadores([...listaAprob(), c]); break; }
     case 'aprob-quitar': guardarAprobadores(listaAprob().filter(c => c !== t.dataset.c)); break;
+    case 'ant-agregar': { const v = viaje(); anticiposDe(v).push({ id: uid(), fecha: todayISO(), valor: 0, destino: 'empleado', nota: '' }); antQuitando = ''; await guardar(); const y = window.scrollY; render(); window.scrollTo(0, y); const ins = document.querySelectorAll('[data-ant="valor"]'); if (ins.length) { ins[ins.length - 1].focus(); ins[ins.length - 1].select(); } break; }
+    case 'ant-quitar': { const v = viaje(), id = t.dataset.id, a = anticiposDe(v).find(x => x.id === id); if (!a) break; if (Number(a.valor) > 0 && antQuitando !== id) { antQuitando = id; } else { v.anticipos = v.anticipos.filter(x => x.id !== id); antQuitando = ''; sincAnticipo(v); await guardar(); toast('Anticipo quitado'); } const y = window.scrollY; render(); window.scrollTo(0, y); break; }
+    case 'ant-destino': { const v = viaje(), a = anticiposDe(v).find(x => x.id === t.dataset.id); if (!a) break; a.destino = t.dataset.d; antQuitando = ''; await guardar(); const y = window.scrollY; render(); window.scrollTo(0, y); break; }
     case 'adm-modo': ponerModoAdmin(t.dataset.m === 'aprob'); ADM.abierta = ''; render(); window.scrollTo(0, 0); break;
     case 'adm-filtro': ADM.filtro = t.dataset.f; render(); break;
     case 'adm-recargar': admCargar(); break;
@@ -3345,6 +3384,10 @@ document.addEventListener('submit', e => { if (e.target.id === 'g-form') { e.pre
 document.addEventListener('input', e => {
   const el = e.target;
   if (el.hasAttribute('data-money')) moneyFormat(el);
+  if (el.dataset.ant) {
+    const v = viaje(), a = anticiposDe(v).find(x => x.id === el.dataset.id);
+    if (a) { a[el.dataset.ant] = el.dataset.ant === 'valor' ? (el.value === '' ? 0 : parseValor(el.value)) : el.value; sincAnticipo(v); guardar(); const t = $('#ant-tot'); if (t) t.innerHTML = vAntTot(v); }
+  }
   if (el.dataset.vf) {
     const v = viaje(); const k = el.dataset.vf;
     v[k] = el.hasAttribute('data-money') ? (el.value === '' ? (k === 'efectivo' ? '' : 0) : parseValor(el.value)) : el.value;

@@ -374,3 +374,13 @@ input[readonly] { background: var(--surface-2); color: var(--muted); }
 .aprob-row small { color: var(--muted); flex: 0 0 auto; }
 .aprob-row .btn { flex: 0 0 auto; padding: 6px 10px; }
 .sign small.fo-aprob { display: block; font-size: 10px; font-weight: 400; color: #444; margin-top: 2px; }
+/* Anticipos */
+.ant-box { gap: 8px; }
+.ant-item { border: 1px solid var(--line); border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 8px; background: var(--surface); }
+.ant-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.ant-top .btn { padding: 5px 10px; font-size: 13px; }
+.ant-item .seg button { flex: 1; font-size: 13px; padding: 7px 8px; }
+.ant-nota { width: 100%; box-sizing: border-box; }
+.ant-tot { background: var(--surface-2); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 3px; }
+.ant-tot div { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
+.ant-tot div:first-child { font-weight: 700; border-bottom: 1px solid var(--line); padding-bottom: 4px; margin-bottom: 2px; }
