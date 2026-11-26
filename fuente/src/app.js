@@ -2821,7 +2821,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '54 (26/11/2026)';
+const APP_VERSION = '55 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">

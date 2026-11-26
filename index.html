@@ -395,6 +395,9 @@ input[readonly] { background: var(--surface-2); color: var(--muted); }
 .ant-tot { background: var(--surface-2); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 3px; }
 .ant-tot div { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
 .ant-tot div:first-child { font-weight: 700; border-bottom: 1px solid var(--line); padding-bottom: 4px; margin-bottom: 2px; }
+/* Hoja "¿Qué va a legalizar?": el texto largo hace salto de línea y no ensancha la hoja */
+.tipo-opc, .tipo-opc .item { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
+.tipo-opc .item .t, .tipo-opc .item .s { display: block; width: 100%; min-width: 0; white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; line-height: 1.35; }
 
 :root{padding-top:env(safe-area-inset-top,0px)}
 [hidden]{display:none!important}
@@ -3237,7 +3240,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '54 (26/11/2026)';
+const APP_VERSION = '55 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
