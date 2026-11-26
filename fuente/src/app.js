@@ -777,7 +777,7 @@ function iaErrorExc(e) {
 }
 function iaErrorES(status, msg) {
   msg = msg || '';
-  if (/API key not valid|API_KEY_INVALID/i.test(msg) || status === 401) return 'La clave de Gemini no es válida. Cópiela otra vez desde Google AI Studio (empieza por AIza).';
+  if (/API key not valid|API_KEY_INVALID/i.test(msg) || status === 401) return 'La clave de Gemini no es válida. Cópiela otra vez completa desde Google AI Studio.';
   if (status === 403) return 'La clave de Gemini no tiene permiso para usar este servicio.';
   if (status === 429) return /quota/i.test(msg) ? 'Se acabó el cupo gratuito de Gemini por hoy. Llene los datos a mano o intente mañana.' : 'Gemini recibió demasiadas solicitudes. Espere un minuto e intente de nuevo con "Leer con IA".';
   if (status === 503 || status === 500 || /high demand|overloaded|unavailable/i.test(msg)) return 'Gemini está saturado en este momento. Intente de nuevo en unos minutos con "Leer con IA", o llene los datos a mano.';
@@ -951,17 +951,17 @@ function vIA() {
 const IA_URL = 'https://aistudio.google.com/apikey';
 const iaPospuesta = () => { try { return Number(localStorage.getItem('ia:posponer:' + (GW.ls('email') || '')) || 0) > Date.now(); } catch { return false; } };
 function ofrecerClaveIA(forzar) {
-  if (iaLista() || document.querySelector('.ia-guia-back')) return;
+  if ((iaLista() && IA.propia) || document.querySelector('.ia-guia-back')) return;
   if (!forzar && (iaPospuesta() || !(window.Android && Android.web && GW.ls('email')) || $('#sheet').innerHTML || document.querySelector('.scan-back, .login'))) return;
   const cont = document.createElement('div'); cont.className = 'ia-guia-back'; document.body.appendChild(cont);
   cont.innerHTML = `<div class="ia-guia"><div class="sheet-head"><h3>✨ Active la lectura de facturas con IA</h3><button class="x" data-g="cerrar" aria-label="Cerrar">×</button></div>
-    <p class="hint" style="margin-top:0">Con esto, al tomar la foto de una factura la app llena sola el valor, la fecha, el proveedor y el NIT. Es gratis y toma 2 minutos. La clave queda guardada en <b>su</b> cuenta de Google, así le sirve en cualquier celular.</p>
+    ${iaLista() ? '<div class="note" style="margin:0 0 8px">Cada persona debe usar <b>su propia clave</b> (cada una tiene su propio cupo gratis). Cree la suya y péguela aquí; reemplaza la que hay en este celular.</div>' : ''}<p class="hint" style="margin-top:0">Con esto, al tomar la foto de una factura la app llena sola el valor, la fecha, el proveedor y el NIT. Es gratis y toma 2 minutos. La clave queda guardada en <b>su</b> cuenta de Google, así le sirve en cualquier celular.</p>
     <ol class="ia-pasos">
       <li><b>Abra Google AI Studio</b> y entre con su cuenta de Google.<br><a class="btn primary" href="${IA_URL}" target="_blank" rel="noopener" data-g="abrir">Abrir Google AI Studio ↗</a>
         <div class="hint">Si su cuenta de Sistronic no lo deja entrar, use su Gmail personal: funciona igual.</div></li>
       <li>Toque <b>Create API key</b> (Crear clave de API). Si le pregunta por un proyecto, escoja el que aparece o cree uno. Luego toque <b>Copy</b> (copiar).</li>
-      <li>Vuelva aquí y pegue la clave (empieza por <b>AIza</b>):
-        <div class="row" style="flex-wrap:nowrap;margin-top:6px"><input id="ia-guia-key" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="AIza…" style="flex:1;min-width:0"><button class="btn" data-g="pegar" style="flex:0 0 auto">Pegar</button></div></li>
+      <li>Vuelva aquí y pegue la clave completa:
+        <div class="row" style="flex-wrap:nowrap;margin-top:6px"><input id="ia-guia-key" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Pegue aquí su clave" style="flex:1;min-width:0"><button class="btn" data-g="pegar" style="flex:0 0 auto">Pegar</button></div></li>
     </ol>
     <div id="ia-guia-st" class="hint"></div>
     <div class="row"><button class="btn primary" data-g="activar">Activar</button><button class="btn" data-g="luego">Ahora no</button></div>
@@ -972,18 +972,19 @@ function ofrecerClaveIA(forzar) {
     if (e.target === cont) return cerrar();
     const b = e.target.closest('[data-g]'); if (!b) return; const a = b.dataset.g;
     if (a === 'cerrar') cerrar();
-    else if (a === 'luego') { try { localStorage.setItem('ia:posponer:' + (GW.ls('email') || ''), String(Date.now() + 3 * 864e5)); } catch {} cerrar(); toast('Puede activarla luego desde el formulario de gasto'); }
+    else if (a === 'luego') { try { localStorage.setItem('ia:posponer:' + (GW.ls('email') || ''), String(Date.now() + 864e5)); } catch {} cerrar(); toast('Puede activarla luego desde el formulario de gasto'); }
     else if (a === 'pegar') { try { const t = await navigator.clipboard.readText(); cont.querySelector('#ia-guia-key').value = (t || '').trim(); } catch { st('No se pudo leer el portapapeles: mantenga presionado el campo y toque Pegar.'); } }
     else if (a === 'activar') {
-      const k = cont.querySelector('#ia-guia-key').value.trim().replace(/\s+/g, '');
-      if (!/^AIza[0-9A-Za-z_\-]{30,}$/.test(k)) return st('⚠ Esa no parece una clave de Gemini. Debe empezar por <b>AIza</b> y tener unos 39 caracteres.');
+      // Solo se limpian espacios y caracteres invisibles; Google prueba si la clave sirve (hay claves con formatos distintos)
+      const k = cont.querySelector('#ia-guia-key').value.replace(/[^\x21-\x7E]/g, '');
+      if (k.length < 20) return st('⚠ La clave está incompleta. Cópiela otra vez completa desde Google AI Studio.');
       b.disabled = true; st('<span class="spin"></span> Probando la clave…');
       const antes = IA.key; IA.key = k;
       try {
         const r = await iaFetch({ contents: [{ parts: [{ text: 'Responda solo: OK' }] }], generationConfig: { maxOutputTokens: 5 } }, { intentos: 1, maxModelos: 3, porLlamada: 15000, total: 35000, progreso: t => st(esc(t)) });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) { IA.key = antes; b.disabled = false; return st('✖ ' + esc(iaErrorES(r.status, j?.error?.message))); }
-        IA.auto = true; await guardarIA(); cerrar(); toast('✔ Lectura con IA activada'); if (editando) { leerFormGasto(); pintarGasto(); } else render();
+        IA.auto = true; IA.propia = true; await guardarIA(); cerrar(); toast('✔ Lectura con IA activada'); if (editando) { leerFormGasto(); pintarGasto(); } else render();
       } catch (err) { IA.key = antes; b.disabled = false; st('✖ ' + esc(iaErrorExc(err))); }
     }
   });
@@ -1040,7 +1041,7 @@ function pintarGasto(anim) {
         ${iaLeyendo ? '<div class="note ia-busy"><span class="spin"></span> <span class="txt">Leyendo la factura con IA…</span></div>' : ''}
         ${g._iaErr && !iaLeyendo ? `<div class="note">⚠ ${esc(g._iaErr)}</div>` : ''}
         ${g._ia && g._ia.length && !iaLeyendo ? `<div class="note ok">✨ Llenado con IA: ${esc(g._ia.join(', '))}. Revise antes de guardar.</div>` : ''}
-        ${!iaLista() ? '<button type="button" class="ia-activar" data-act="ia-guia">✨ Activar lectura automática con IA (gratis)</button>' : ''}
+        ${!iaLista() || !IA.propia ? `<button type="button" class="ia-activar" data-act="ia-guia">✨ ${iaLista() ? 'Usar mi propia clave de IA (gratis)' : 'Activar lectura automática con IA (gratis)'}</button>` : ''}
         <img id="g-foto-prev" class="photo-prev" alt="Foto de la factura" hidden>
       </div>
       <label class="field"><span>Valor total COP</span><input id="g-valor" class="val-input num" inputmode="numeric" required data-money placeholder="$ 0" value="${g.valor === '' ? '' : Number(g.valor).toLocaleString('es-CO')}"></label>
@@ -2148,7 +2149,7 @@ function registros() {
   R.cfg = { listas: S.listas || null, empresa: S.empresa || null, conceptosCfg: S.conceptosCfg || null, conceptosOff: S.conceptosOff || null, firma: S.firma || '', osClientes: S.osClientes || null };
   for (const [k, x] of Object.entries(S.perfil || {})) R.cfg['perfil.' + k] = x;
   for (const [k, x] of Object.entries(S.drive || {})) R.cfg['drive.' + k] = x;
-  R.ia = { key: IA.key || '', modelo: IA.modelo || '', auto: IA.auto !== false };
+  R.ia = { key: IA.key || '', modelo: IA.modelo || '', auto: IA.auto !== false, propia: !!IA.propia };
   return R;
 }
 /* Marca la fecha de cambio de cada registro modificado desde el último guardado */
@@ -2368,7 +2369,7 @@ async function sincronizar(manual) {
     await sellar(); if (sellar.cambio) syncOtraVez = true;
     syncEstado = { estado: 'ok', msg: '', fecha: Date.now() };
     if (bajar) { toast('Datos actualizados desde su cuenta de Google'); render(); } else pintarSyncChip();
-    if (!iaLista()) setTimeout(() => ofrecerClaveIA(), 1500);
+    if (!iaLista() || !IA.propia) setTimeout(() => ofrecerClaveIA(), 1500);
   } catch (e) {
     if (e.espera) syncEstado = { ...syncEstado, estado: 'ok' };
     else if (e.status === 401 || e.status === 403 || /venció/.test(e.message)) { GW.tok = ''; GW.exp = 0; syncEstado = { estado: 'auth', msg: e.message, fecha: Date.now() }; }
@@ -2472,7 +2473,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '46 (26/11/2026)';
+const APP_VERSION = '47 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
