@@ -1842,11 +1842,14 @@ function registros() {
     });
   }
   for (const [k, p] of Object.entries(S.proveedores || {})) R['p:' + k] = p;
-  R.cfg = { listas: S.listas || null, perfil: S.perfil || null, empresa: S.empresa || null, drive: S.drive || null };
+  R.cfg = { listas: S.listas || null, empresa: S.empresa || null };
+  for (const [k, x] of Object.entries(S.perfil || {})) R.cfg['perfil.' + k] = x;
+  for (const [k, x] of Object.entries(S.drive || {})) R.cfg['drive.' + k] = x;
   R.ia = { key: IA.key || '', modelo: IA.modelo || '', auto: IA.auto !== false };
   return R;
 }
 /* Marca la fecha de cambio de cada registro modificado desde el último guardado */
+const camposHash = d => { const o = {}; if (d && typeof d === 'object') for (const [c, x] of Object.entries(d)) if (x !== undefined) o[c] = hashStr(JSON.stringify(x)); return o; };
 async function sellar() {
   const M = await metaSync(), R = registros(), now = Date.now();
   // Primera vez en este dispositivo: lo que ya existe queda con fecha antigua, así lo de la nube gana si es el mismo registro
@@ -1854,7 +1857,12 @@ async function sellar() {
   let cambio = false;
   for (const [k, d] of Object.entries(R)) {
     const h = hashStr(JSON.stringify(d)), m = M.recs[k];
-    if (!m || m.h !== h) { M.recs[k] = { h, mod: m ? now : k === 'ia' ? (d.key ? now : 1) : base }; cambio = true; }
+    if (!m || m.h !== h) {
+      const mod0 = m ? now : k === 'ia' ? (d.key ? now : 1) : base, nf = camposHash(d), f = {};
+      for (const [c, hh] of Object.entries(nf)) f[c] = m && m.f && m.f[c] && m.f[c][0] === hh ? m.f[c] : [hh, m && !m.f ? now : mod0];
+      if (m && m.f) for (const c of Object.keys(m.f)) if (!(c in nf)) f[c] = m.f[c][0] === '∅' ? m.f[c] : ['∅', now];
+      M.recs[k] = { h, mod: mod0, f }; cambio = true;
+    }
     if (M.del[k]) delete M.del[k];
   }
   for (const k of Object.keys(M.recs)) if (!R[k]) { M.del[k] = now; delete M.recs[k]; cambio = true; }
@@ -1911,10 +1919,16 @@ function aplicarRegistros(F) {
   const c = F.recs.cfg && F.recs.cfg.d;
   const ia = F.recs.ia && F.recs.ia.d;
   if (ia) { IA = Object.assign(IA, ia); DB.set('ia', IA); }
-  if (c) { if (c.listas) S.listas = c.listas; if (c.perfil) S.perfil = c.perfil; if (c.empresa) S.empresa = c.empresa; if (c.drive) S.drive = c.drive; }
+  if (c) {
+    if (c.listas) S.listas = c.listas; if (c.empresa) S.empresa = c.empresa;
+    const sub = pre => { const o = {}; let hay = false; for (const [k, x] of Object.entries(c)) if (k.startsWith(pre)) { o[k.slice(pre.length)] = x; hay = true; } return hay ? o : null; };
+    const p = sub('perfil.') || c.perfil, d = sub('drive.') || c.drive;
+    if (p) S.perfil = p; if (d) S.drive = d;
+  }
   if (!S.viajes.length) S.viajes.push(nuevoViaje());
   if (!S.viajes.some(v => v.id === S.activo)) S.activo = S.viajes[0].id;
 }
+const escribiendo = () => { const a = document.activeElement; return !!(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.closest('#main')); };
 const hojaAbierta = () => !!($('#sheet') && $('#sheet').innerHTML.trim()) || !!corteForm;
 /* Quita el viaje de ejemplo de versiones anteriores (datos de otra persona) de las cuentas que no son la del dueño de esos datos */
 async function limpiarEjemplo() {
@@ -1982,23 +1996,45 @@ async function sincronizar(manual) {
       for (const k of Object.keys(S.proveedores || {})) if (!remoto.recs['p:' + k]) { delete S.proveedores[k]; delete M.recs['p:' + k]; }
       R = registros();
     }
-    // Fusión: por cada registro gana la fecha de cambio más reciente
+    // Huellas de lo que se va a sincronizar: lo que el usuario escriba mientras tanto queda pendiente para la próxima vez
+    const H0 = {}, FH0 = {}; for (const [k, d] of Object.entries(R)) { H0[k] = hashStr(JSON.stringify(d)); FH0[k] = camposHash(d); }
+    // Fusión campo por campo: en cada dato gana el cambio más reciente (así un equipo no pisa lo que otro escribió en otro campo)
     const F = { recs: {}, del: {} }; let subir = false, bajar = false;
+    const igual = (a, b) => JSON.stringify(a) === JSON.stringify(b);
     const claves = new Set([...Object.keys(R), ...Object.keys(M.del), ...Object.keys(remoto.recs), ...Object.keys(remoto.del)]);
     for (const k of claves) {
-      const loc = R[k] && M.recs[k] ? { mod: M.recs[k].mod, d: R[k] } : M.del[k] ? { mod: M.del[k], x: 1 } : null;
+      const mr = M.recs[k];
+      const loc = R[k] && mr ? { mod: mr.mod, d: R[k], f: Object.fromEntries(Object.entries(mr.f || {}).map(([c, x]) => [c, x[1]])) } : M.del[k] ? { mod: M.del[k], x: 1 } : null;
       const rem = remoto.recs[k] ? remoto.recs[k] : remoto.del[k] ? { mod: remoto.del[k], x: 1 } : null;
-      const win = !rem ? loc : !loc ? rem : rem.mod > loc.mod || (rem.mod === loc.mod && M.primera) ? rem : loc;
-      if (!win) continue;
-      if (win === loc && (!rem || rem.mod !== loc.mod || !!rem.x !== !!loc.x)) subir = true;
-      if (win === rem && (!loc || loc.mod !== rem.mod || !!rem.x !== !!loc.x)) bajar = true;
-      if (win.x) F.del[k] = win.mod; else F.recs[k] = { mod: win.mod, d: win.d };
+      let win;
+      if (loc && rem && !loc.x && !rem.x && loc.d && rem.d && typeof loc.d === 'object' && typeof rem.d === 'object') {
+        const d = {}, f = {}, lf = c => (loc.f[c] != null ? loc.f[c] : loc.mod), rf = c => (rem.f && rem.f[c] != null ? rem.f[c] : rem.mod);
+        const cs = new Set([...Object.keys(loc.d), ...Object.keys(loc.f), ...Object.keys(rem.d), ...Object.keys(rem.f || {})]);
+        for (const c of cs) {
+          const lHas = c in loc.d || c in loc.f, rHas = c in rem.d || (rem.f && c in rem.f);
+          const lm = lHas ? lf(c) : -1, rm = rHas ? rf(c) : -1;
+          const useR = rm > lm || (rm === lm && M.primera);
+          const val = useR ? rem.d[c] : loc.d[c];
+          if (val !== undefined) d[c] = val;
+          f[c] = useR ? rm : lm;
+          if (!igual(val, loc.d[c])) bajar = true;
+          if (!igual(val, rem.d[c])) subir = true;
+        }
+        win = { mod: Math.max(loc.mod, rem.mod), d, f };
+        if (win.mod !== rem.mod) subir = true;
+      } else {
+        win = !rem ? loc : !loc ? rem : rem.mod > loc.mod || (rem.mod === loc.mod && M.primera) ? rem : loc;
+        if (!win) continue;
+        if (win === loc && (!rem || rem.mod !== loc.mod || !!rem.x !== !!loc.x)) subir = true;
+        if (win === rem && (!loc || loc.mod !== rem.mod || !!rem.x !== !!loc.x)) bajar = true;
+      }
+      if (win.x) F.del[k] = win.mod; else F.recs[k] = { mod: win.mod, d: win.d, f: win.f || {} };
     }
     // Borrados de más de 120 días ya no hacen falta
     const lim = Date.now() - 120 * 864e5; for (const k of Object.keys(F.del)) if (F.del[k] < lim) delete F.del[k];
     if (bajar) {
-      if (hojaAbierta()) { syncOtraVez = true; throw Object.assign(new Error('espera'), { espera: true }); }
-      aplicarRegistros(F); await DB.set('state', S);
+      if (hojaAbierta() || escribiendo()) { syncOtraVez = true; throw Object.assign(new Error('espera'), { espera: true }); }
+      aplicarRegistros(F); for (const [k, d] of Object.entries(registros())) { H0[k] = hashStr(JSON.stringify(d)); FH0[k] = camposHash(d); } await DB.set('state', S);
       if (await limpiarEjemplo()) { syncOtraVez = true; }
     }
     // Fotos de las facturas
@@ -2016,10 +2052,15 @@ async function sincronizar(manual) {
     for (const [gid, r] of Object.entries(fotosR)) if (!vivos.has(gid) && F.del['g:' + gid]) { try { await GW.api('DELETE', `https://www.googleapis.com/drive/v3/files/${r.id}`); } catch {} }
     if (subir || !fDatos) await syncEscribir(fDatos && fDatos.id, SYNC_ARCHIVO, JSON.stringify({ app: 'viaticos', version: 1, fecha: new Date().toISOString(), recs: F.recs, del: F.del }), 'application/json', {});
     // El estado local queda igual a lo fusionado
-    const R2 = registros(); M.recs = {};
-    for (const [k, d] of Object.entries(R2)) M.recs[k] = { h: hashStr(JSON.stringify(d)), mod: F.recs[k] ? F.recs[k].mod : Date.now() };
+    M.recs = {};
+    for (const [k, x] of Object.entries(F.recs)) {
+      const fh = FH0[k] || camposHash(x.d), f = {};
+      for (const c of new Set([...Object.keys(fh), ...Object.keys(x.f || {})])) f[c] = [fh[c] || '∅', x.f && x.f[c] != null ? x.f[c] : x.mod];
+      M.recs[k] = { h: H0[k] || hashStr(JSON.stringify(x.d)), mod: x.mod, f };
+    }
     M.del = F.del; M.primera = false; M.cuenta = email; M.ultima = Date.now(); M.pendiente = false;
     await DB.set('sync', M);
+    await sellar(); if (sellar.cambio) syncOtraVez = true;
     syncEstado = { estado: 'ok', msg: '', fecha: Date.now() };
     if (bajar) { toast('Datos actualizados desde su cuenta de Google'); render(); } else pintarSyncChip();
   } catch (e) {
@@ -2122,7 +2163,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '29 (26/11/2026)';
+const APP_VERSION = '30 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
