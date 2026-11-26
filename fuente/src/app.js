@@ -212,7 +212,7 @@ function render() {
   $('#tabs').innerHTML = TABS.map(([k, l, i]) => `<button role="tab" aria-selected="${tab === k}" data-tab="${k}">${i}<span>${l}</span></button>`).join('');
   $('#fab').hidden = !(tab === 'gastos' || tab === 'facturas');
   const main = $('#main');
-  main.innerHTML = `<div id="sync-chip">${syncChipHTML()}</div>` + ({ gastos: vGastos, resumen: vResumen, facturas: vFacturas, legal: vLegal, viaje: vViaje, config: vConfig })[tab](v);
+  main.innerHTML = `<div id="sync-chip">${syncChipHTML()}</div>` + ({ gastos: vGastos, resumen: vResumen, facturas: vFacturas, legal: vLegal, viaje: vViaje, config: vConfig, conceptos: vConceptos })[tab](v);
   pintarAvatar();
   main.focus({ preventScroll: true });
 }
@@ -566,6 +566,92 @@ function vLegal(v0) {
   <div class="fo-wrap">${html}</div>`;
 }
 
+/* ---------- Conceptos de gasto: ícono, color, subconceptos, orden y activar/desactivar sin perder el historial ----------
+   S.listas = conceptos activos { concepto: [subconceptos activos] } (el orden de las llaves es el orden en pantalla).
+   S.conceptosCfg = { concepto: { icono, color, subsOff: [] } }   S.conceptosOff = { concepto: [subconceptos] } (desactivados) */
+const CP_ICONOS = ['🚕', '✈️', '🚌', '⛽', '🅿️', '🍽️', '☕', '🏨', '🛏️', '🧺', '📦', '🧰', '📎', '📡', '💊', '🎫', '🧾', '🏷️'];
+const CP_COLORES = ['#3b6fd8', '#e8892c', '#1f9d63', '#8a5cd6', '#e20214', '#0f8fa6', '#b8860b', '#6b7280'];
+const CP_DEF = { 'Transporte': ['🚕', '#3b6fd8'], 'Alimentación': ['🍽️', '#e8892c'], 'Alojamiento': ['🏨', '#1f9d63'], 'Otros gastos': ['📦', '#8a5cd6'] };
+const cpCfg = c => { S.conceptosCfg = S.conceptosCfg || {}; const d = CP_DEF[c] || ['🏷️', CP_COLORES[Object.keys(S.listas).concat(Object.keys(S.conceptosOff || {})).indexOf(c) % CP_COLORES.length] || '#6b7280']; return Object.assign({ icono: d[0], color: d[1], subsOff: [] }, S.conceptosCfg[c] || {}); };
+const cpIcono = c => cpCfg(c).icono;
+const usoConcepto = (c, sub) => { let n = 0; for (const v of S.viajes) for (const g of v.gastos) if (g.concepto === c && (sub == null || g.sub === sub)) n++; return n; };
+let cpBuscar = '', cpAgregando = null, cpEdit = null;
+function vConceptos() {
+  if (!cfgAbierta) { tab = 'gastos'; return vGastos(viaje()); }
+  const q = normFact(cpBuscar), off = S.conceptosOff || {};
+  const coincide = (c, subs) => !q || normFact(c).includes(q) || subs.some(x => normFact(x).includes(q));
+  const tarjeta = (c, subs, activo) => {
+    const k = cpCfg(c), n = usoConcepto(c), so = k.subsOff || [];
+    return `<div class="cp-card ${activo ? '' : 'cp-off'}">
+      <button class="cp-head" data-act="cp-editar" data-c="${esc(c)}"><span class="cp-ic" style="background:${k.color}1f;color:${k.color}">${k.icono}</span><span class="cp-t"><b>${esc(c)}</b><small>${subs.length} subconcepto${subs.length === 1 ? '' : 's'} · ${n} gasto${n === 1 ? '' : 's'}</small></span>${activo ? '<span class="cp-more">Editar ›</span>' : ''}</button>
+      ${activo ? `<div class="cp-subs">${subs.map(x => `<span class="cp-chip">${esc(x)}</span>`).join('')}${so.map(x => `<span class="cp-chip off" title="Desactivado">${esc(x)}</span>`).join('')}
+        ${cpAgregando === c ? `<span class="cp-add-in"><input id="cp-nuevo-sub" placeholder="Nuevo subconcepto" autocomplete="off"><button class="btn primary" data-act="cp-sub-ok" data-c="${esc(c)}">Agregar</button></span>` : `<button class="cp-chip add" data-act="cp-sub-add" data-c="${esc(c)}">+ Agregar</button>`}</div>`
+      : `<div class="cp-subs"><button class="btn" data-act="cp-activar" data-c="${esc(c)}">Activar</button></div>`}
+    </div>`;
+  };
+  const act = Object.entries(S.listas).filter(([c, x]) => coincide(c, x)), ina = Object.entries(off).filter(([c, x]) => coincide(c, x));
+  return `<div class="row" style="margin:0 0 6px"><button class="btn" data-act="cp-volver">‹ Configuración</button></div>
+  <h2>Conceptos de gasto</h2>
+  <div class="cp-bar"><input id="cp-buscar" placeholder="Buscar concepto o subconcepto…" value="${esc(cpBuscar)}" autocomplete="off"><button class="btn primary" data-act="cp-nuevo">+ Concepto</button></div>
+  ${act.map(([c, x]) => tarjeta(c, x, true)).join('') || '<div class="empty">No hay conceptos que coincidan.</div>'}
+  ${ina.length ? `<h2>Desactivados <span style="text-transform:none;letter-spacing:0;font-weight:500">· no salen al registrar, los gastos viejos los conservan</span></h2>${ina.map(([c, x]) => tarjeta(c, x, false)).join('')}` : ''}
+  <p class="hint">Toque un concepto para cambiarle el nombre, el ícono o el color, ordenar o desactivar sus subconceptos. Si cambia un nombre, también se actualiza en los gastos que ya lo usan.</p>
+  <div class="row"><button class="btn" data-act="reset-listas">Restaurar la lista original</button></div>`;
+}
+function abrirConcepto(c) {
+  const activo = !c || c in S.listas, k = c ? cpCfg(c) : { icono: '🏷️', color: CP_COLORES[Object.keys(S.listas).length % CP_COLORES.length], subsOff: [] };
+  const subs = c ? (activo ? S.listas[c] : (S.conceptosOff || {})[c] || []) : [];
+  cpEdit = { orig: c || null, nombre: c || '', icono: k.icono, color: k.color, activo, subs: [...subs.map(n => ({ n, orig: n, on: true })), ...(k.subsOff || []).map(n => ({ n, orig: n, on: false }))] };
+  pintarConcepto(true);
+}
+function pintarConcepto(anim) {
+  const e = cpEdit, n = e.orig ? usoConcepto(e.orig) : 0;
+  $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet ${anim ? 'anim' : ''}" id="cp-form" autocomplete="off"><div class="sheet-head"><h3>${e.orig ? 'Editar concepto' : 'Nuevo concepto'}</h3><button type="button" class="x" data-close="1" aria-label="Cerrar">×</button></div><div class="form">
+    <label class="field"><span>Nombre</span><input id="cp-nombre" value="${esc(e.nombre)}" required></label>
+    <div class="field"><span>Ícono</span><div class="cp-iconos">${CP_ICONOS.map(i => `<button type="button" data-act="cp-icono" data-v="${i}" aria-pressed="${i === e.icono}">${i}</button>`).join('')}</div></div>
+    <div class="field"><span>Color</span><div class="cp-colores">${CP_COLORES.map(x => `<button type="button" data-act="cp-color" data-v="${x}" aria-pressed="${x === e.color}" style="background:${x}" aria-label="Color"></button>`).join('')}</div></div>
+    <div class="field"><span>Subconceptos (ordene con las flechas; el ojo los activa o desactiva)</span>
+      <div class="cp-lista">${e.subs.map((x, i) => `<div class="cp-sub ${x.on ? '' : 'off'}">
+        <input data-cpsub="${i}" value="${esc(x.n)}" aria-label="Subconcepto">
+        <button type="button" class="ib" data-act="cp-sub-up" data-i="${i}" ${i ? '' : 'disabled'} aria-label="Subir">↑</button>
+        <button type="button" class="ib" data-act="cp-sub-down" data-i="${i}" ${i < e.subs.length - 1 ? '' : 'disabled'} aria-label="Bajar">↓</button>
+        <button type="button" class="ib" data-act="cp-sub-on" data-i="${i}" aria-label="${x.on ? 'Desactivar' : 'Activar'}" title="${x.on ? 'Activo' : 'Desactivado'}">${x.on ? '👁' : '🚫'}</button>
+        ${x.orig && usoConcepto(e.orig, x.orig) ? '<span class="ib" style="visibility:hidden"></span>' : `<button type="button" class="ib" data-act="cp-sub-del" data-i="${i}" aria-label="Quitar">✕</button>`}
+      </div>`).join('') || '<div class="hint">Sin subconceptos todavía.</div>'}</div>
+      <div class="cp-add-in" style="margin-top:8px"><input id="cp-sub-txt" placeholder="Agregar subconcepto" autocomplete="off"><button type="button" class="btn" data-act="cp-sub-mas">Agregar</button></div>
+    </div>
+    <div class="note" id="cp-err" hidden></div>
+    <div class="row"><button class="btn primary" type="submit">Guardar</button>${e.orig ? (e.activo ? '<button type="button" class="btn" data-act="cp-desactivar">Desactivar concepto</button>' : '<button type="button" class="btn" data-act="cp-activar-ed">Activar concepto</button>') : ''}</div>
+    ${e.orig && !n ? '<div class="row"><button type="button" class="btn danger" data-act="cp-eliminar">Eliminar concepto (no tiene gastos)</button></div>' : e.orig ? `<p class="hint">Tiene ${n} gasto(s): en lugar de eliminarlo, desactívelo.</p>` : ''}
+  </div></form></div>`;
+}
+function leerConcepto() { const e = cpEdit; if (!e) return; const n = $('#cp-nombre'); if (n) e.nombre = n.value; document.querySelectorAll('[data-cpsub]').forEach(el => { const x = e.subs[+el.dataset.cpsub]; if (x) x.n = el.value; }); }
+async function guardarConcepto(forzarActivo) {
+  leerConcepto(); const e = cpEdit, nom = e.nombre.trim().replace(/\s+/g, ' ');
+  const err = m => { const b = $('#cp-err'); if (b) { b.hidden = false; b.textContent = '⚠ ' + m; } };
+  if (!nom) return err('Escriba el nombre del concepto');
+  const todos = [...Object.keys(S.listas), ...Object.keys(S.conceptosOff || {})];
+  if (todos.some(c => c !== e.orig && normFact(c) === normFact(nom))) return err('Ya existe un concepto con ese nombre');
+  const subs = e.subs.map(x => ({ ...x, n: x.n.trim().replace(/\s+/g, ' ') })).filter(x => x.n);
+  const vistos = new Set(); for (const x of subs) { const k = normFact(x.n); if (vistos.has(k)) return err(`El subconcepto "${x.n}" está repetido`); vistos.add(k); }
+  const activo = forzarActivo != null ? forzarActivo : e.activo;
+  if (!activo && Object.keys(S.listas).filter(c => c !== e.orig).length === 0) return err('Debe quedar al menos un concepto activo');
+  // Renombrar en los gastos existentes
+  for (const v of S.viajes) for (const g of v.gastos) {
+    if (!e.orig || g.concepto !== e.orig) continue;
+    const x = subs.find(y => y.orig && y.orig === g.sub); if (x && x.n !== x.orig) g.sub = x.n;
+    if (nom !== e.orig) g.concepto = nom;
+  }
+  // Reconstruir listas conservando la posición del concepto
+  S.conceptosOff = S.conceptosOff || {}; S.conceptosCfg = S.conceptosCfg || {};
+  const on = subs.filter(x => x.on).map(x => x.n), offs = subs.filter(x => !x.on).map(x => x.n);
+  const reemplazar = (obj, val) => { const out = {}; let puesto = false; for (const [c, x] of Object.entries(obj)) { if (c === e.orig) { if (val !== undefined) { out[nom] = val; puesto = true; } } else out[c] = x; } if (val !== undefined && !puesto) out[nom] = val; return out; };
+  if (activo) { S.listas = reemplazar(S.listas, on); S.conceptosOff = reemplazar(S.conceptosOff, undefined); }
+  else { S.conceptosOff = reemplazar(S.conceptosOff, [...on, ...offs]); S.listas = reemplazar(S.listas, undefined); }
+  if (e.orig && e.orig !== nom) delete S.conceptosCfg[e.orig];
+  S.conceptosCfg[nom] = { icono: e.icono, color: e.color, subsOff: activo ? offs : [] };
+  await guardar(); cpEdit = null; cerrarSheet(); render(); toast(activo ? 'Concepto guardado' : 'Concepto desactivado');
+}
 function vViaje(v) {
   const f = (k, l, t = 'text', extra = '') => `<label class="field"><span>${l}</span><input id="vj-${k}" type="${t}" data-vf="${k}" value="${esc(v[k])}" ${extra}></label>`;
   return `<h2>Datos del viaje</h2>
@@ -591,11 +677,8 @@ function vViaje(v) {
   </div>
   <h2>Viajes</h2>
   <div class="row"><button class="btn" data-act="trips">Cambiar de viaje / nuevo viaje</button></div>
-  <h2>Listas de conceptos</h2>
-  <div class="card form">
-    ${Object.keys(S.listas).map(c => `<label class="field"><span>Subconceptos de ${esc(c)} (uno por línea)</span><textarea id="ls-${esc(c)}" data-lista="${esc(c)}" rows="4">${esc(S.listas[c].join('\n'))}</textarea></label>`).join('')}
-    <button class="btn" data-act="reset-listas">Restaurar listas originales</button>
-  </div>
+  <h2>Conceptos de gasto</h2>
+  <div class="card form"><p class="hint" style="margin:0">${Object.keys(S.listas).map(c => cpIcono(c) + ' ' + esc(c)).join(' · ')}</p><div class="row"><button class="btn" data-act="cp-abrir">Administrar conceptos</button></div></div>
   <h2>Zona de cuidado</h2>
   <div class="card form" id="danger"><button class="btn danger" data-act="del-trip">Eliminar este viaje</button></div>`;
 }
@@ -834,7 +917,7 @@ function abrirGasto(id) {
 function hoyEnRango(v) { const t = todayISO(); if (v.inicio && t < v.inicio) return v.inicio; if (v.fin && t > v.fin) return v.fin; return t; }
 function pintarGasto(anim) {
   const g = editando, v = viaje();
-  const subs = S.listas[g.concepto] || [];
+  const subs = S.listas[g.concepto] || (S.conceptosOff || {})[g.concepto] || [];
   const provs = [...new Set(S.viajes.flatMap(x => x.gastos.map(y => y.proveedor)).filter(Boolean))].sort();
   const seg = (name, opts, cur) => `<div class="seg" role="group" data-seg="${name}">${opts.map(o => `<button type="button" data-val="${esc(o)}" aria-pressed="${cur === o}">${esc(o)}</button>`).join('')}</div>`;
   const e = estado({ ...g, valor: 1 });
@@ -852,7 +935,7 @@ function pintarGasto(anim) {
         <img id="g-foto-prev" class="photo-prev" alt="Foto de la factura" hidden>
       </div>
       <label class="field"><span>Valor total COP</span><input id="g-valor" class="val-input num" inputmode="numeric" required data-money placeholder="$ 0" value="${g.valor === '' ? '' : Number(g.valor).toLocaleString('es-CO')}"></label>
-      <div class="field"><span>Concepto</span>${seg('concepto', Object.keys(S.listas), g.concepto)}</div>
+      <div class="field"><span>Concepto</span><div class="seg" role="group" data-seg="concepto">${[...Object.keys(S.listas), ...(g.concepto && !(g.concepto in S.listas) ? [g.concepto] : [])].map(o => `<button type="button" data-val="${esc(o)}" aria-pressed="${g.concepto === o}">${cpIcono(o)} ${esc(o)}</button>`).join('')}</div></div>
       <label class="field"><span>Subconcepto</span><select id="g-sub"><option value="">— Sin subconcepto —</option>${subs.map(s => `<option ${s === g.sub ? 'selected' : ''}>${esc(s)}</option>`).join('')}${g.sub && !subs.includes(g.sub) ? `<option selected>${esc(g.sub)}</option>` : ''}</select></label>
       <div class="grid2">
         <label class="field"><span>Fecha</span><input id="g-fecha" type="date" required value="${esc(g.fecha)}"></label>
@@ -1594,7 +1677,7 @@ function registros() {
     });
   }
   for (const [k, p] of Object.entries(S.proveedores || {})) R['p:' + k] = p;
-  R.cfg = { listas: S.listas || null, empresa: S.empresa || null };
+  R.cfg = { listas: S.listas || null, empresa: S.empresa || null, conceptosCfg: S.conceptosCfg || null, conceptosOff: S.conceptosOff || null };
   for (const [k, x] of Object.entries(S.perfil || {})) R.cfg['perfil.' + k] = x;
   for (const [k, x] of Object.entries(S.drive || {})) R.cfg['drive.' + k] = x;
   R.ia = { key: IA.key || '', modelo: IA.modelo || '', auto: IA.auto !== false };
@@ -1672,7 +1755,7 @@ function aplicarRegistros(F) {
   const ia = F.recs.ia && F.recs.ia.d;
   if (ia) { IA = Object.assign(IA, ia); DB.set('ia', IA); }
   if (c) {
-    if (c.listas) S.listas = c.listas; if (c.empresa) S.empresa = c.empresa;
+    if (c.listas) S.listas = c.listas; if (c.empresa) S.empresa = c.empresa; if (c.conceptosCfg) S.conceptosCfg = c.conceptosCfg; if (c.conceptosOff) S.conceptosOff = c.conceptosOff;
     const sub = pre => { const o = {}; let hay = false; for (const [k, x] of Object.entries(c)) if (k.startsWith(pre)) { o[k.slice(pre.length)] = x; hay = true; } return hay ? o : null; };
     const p = sub('perfil.') || c.perfil, d = sub('drive.') || c.drive;
     if (p) S.perfil = p; if (d) S.drive = d;
@@ -1911,11 +1994,12 @@ function vDriveEstado() {
 /* Clave para entrar a Configuración (se guarda solo su huella SHA-256) */
 const CLAVE_CFG = 'dbff5341acad5e2a58db4efd5e72e2d9a0a843a28e02b1183c68162d0a3a3de6';
 let cfgAbierta = false;
+let cpPendiente = false;
 async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '34 (26/11/2026)';
+const APP_VERSION = '35 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
@@ -1932,7 +2016,7 @@ async function probarClaveCfg() {
   const i = $('#cfg-clave'); if (!i) return;
   let ok = false; try { ok = (await sha256(i.value)) === CLAVE_CFG; } catch (e) { $('#cfg-err').innerHTML = `<div class="note">⚠ ${esc(e.message)}</div>`; return; }
   if (!ok) { $('#cfg-err').innerHTML = '<div class="note">⚠ Clave incorrecta.</div>'; i.select(); return; }
-  cfgAbierta = true; cerrarSheet(); tab = 'config'; render(); window.scrollTo(0, 0);
+  cfgAbierta = true; cerrarSheet(); tab = cpPendiente ? 'conceptos' : 'config'; cpPendiente = false; render(); window.scrollTo(0, 0);
 }
 
 /* Perfil de Google (nombre y foto) */
@@ -1970,6 +2054,8 @@ function vConfig() {
       <button class="btn" data-act="logout" style="flex:0 0 auto">Cerrar sesión</button>
     </div>
     <div class="card" id="sync-cfg" style="margin-top:12px">${vSyncCfg()}</div>
+    <h2>Conceptos de gasto</h2>
+    <div class="card form"><div class="row"><button class="btn" data-act="cp-abrir">Administrar conceptos y subconceptos</button></div></div>
     <h2>Google Drive</h2>
     <div class="card form">
     ${c.carpetaId ? `<div class="field"><span>Carpeta de destino en Google Drive</span>
@@ -2392,7 +2478,23 @@ document.addEventListener('click', async e => {
     case 'restore': restaurar(); break;
     case 'trips': abrirViajes(); break;
     case 'new-trip': { const v = nuevoViaje(); S.viajes.push(v); S.activo = v.id; await guardar(); cerrarSheet(); tab = 'viaje'; render(); toast('Viaje creado: complete los datos'); break; }
-    case 'reset-listas': S.listas = JSON.parse(JSON.stringify(LISTAS_DEF)); await guardar(); render(); toast('Listas restauradas'); break;
+    case 'cp-abrir': if (!cfgAbierta) { cpPendiente = true; abrirConfig(); break; } tab = 'conceptos'; cpBuscar = ''; cpAgregando = null; render(); window.scrollTo(0, 0); break;
+    case 'cp-volver': tab = 'config'; render(); window.scrollTo(0, 0); break;
+    case 'cp-nuevo': abrirConcepto(null); break;
+    case 'cp-editar': abrirConcepto(t.dataset.c); break;
+    case 'cp-sub-add': cpAgregando = t.dataset.c; render(); setTimeout(() => $('#cp-nuevo-sub')?.focus(), 30); break;
+    case 'cp-sub-ok': { const c = t.dataset.c, x = (($('#cp-nuevo-sub') || {}).value || '').trim().replace(/\s+/g, ' '); if (!x) { cpAgregando = null; render(); break; } const k = cpCfg(c); if ([...(S.listas[c] || []), ...(k.subsOff || [])].some(y => normFact(y) === normFact(x))) { toast('Ese subconcepto ya existe'); break; } S.listas[c] = [...(S.listas[c] || []), x]; cpAgregando = null; await guardar(); render(); toast('Subconcepto agregado'); break; }
+    case 'cp-activar': { const c = t.dataset.c, off = S.conceptosOff || {}; S.listas[c] = off[c] || []; delete off[c]; await guardar(); render(); toast('Concepto activado'); break; }
+    case 'cp-icono': leerConcepto(); cpEdit.icono = t.dataset.v; pintarConcepto(); break;
+    case 'cp-color': leerConcepto(); cpEdit.color = t.dataset.v; pintarConcepto(); break;
+    case 'cp-sub-up': case 'cp-sub-down': { leerConcepto(); const i = +t.dataset.i, j = t.dataset.act === 'cp-sub-up' ? i - 1 : i + 1, a = cpEdit.subs; if (a[j]) [a[i], a[j]] = [a[j], a[i]]; pintarConcepto(); break; }
+    case 'cp-sub-on': { leerConcepto(); const x = cpEdit.subs[+t.dataset.i]; x.on = !x.on; pintarConcepto(); break; }
+    case 'cp-sub-del': { leerConcepto(); cpEdit.subs.splice(+t.dataset.i, 1); pintarConcepto(); break; }
+    case 'cp-sub-mas': { leerConcepto(); const x = (($('#cp-sub-txt') || {}).value || '').trim(); if (x) { cpEdit.subs.push({ n: x, orig: null, on: true }); pintarConcepto(); setTimeout(() => $('#cp-sub-txt')?.focus(), 30); } break; }
+    case 'cp-desactivar': guardarConcepto(false); break;
+    case 'cp-activar-ed': guardarConcepto(true); break;
+    case 'cp-eliminar': { const c = cpEdit.orig; if (usoConcepto(c)) break; if (Object.keys(S.listas).length <= 1 && c in S.listas) { toast('Debe quedar al menos un concepto activo'); break; } delete S.listas[c]; if (S.conceptosOff) delete S.conceptosOff[c]; if (S.conceptosCfg) delete S.conceptosCfg[c]; await guardar(); cpEdit = null; cerrarSheet(); render(); toast('Concepto eliminado'); break; }
+    case 'reset-listas': S.listas = JSON.parse(JSON.stringify(LISTAS_DEF)); S.conceptosOff = {}; S.conceptosCfg = {}; await guardar(); render(); toast('Lista original restaurada'); break;
     case 'del-trip': $('#danger').innerHTML = `<div class="note">Se borrará el viaje y sus ${viaje().gastos.length} gastos. No se puede deshacer.</div><div class="row"><button class="btn danger" data-act="del-trip-ok">Sí, eliminar viaje</button><button class="btn" data-act="del-trip-no">Cancelar</button></div>`; break;
     case 'del-trip-no': render(); break;
     case 'del-trip-ok': {
@@ -2403,7 +2505,7 @@ document.addEventListener('click', async e => {
     }
   }
 });
-document.addEventListener('submit', e => { if (e.target.id === 'g-form') { e.preventDefault(); guardarGasto(!!(e.submitter && e.submitter.dataset.otro)); } if (e.target.id === 'cfg-form') { e.preventDefault(); probarClaveCfg(); } if (e.target.id === 'pv-form') { e.preventDefault(); guardarProveedor(); } });
+document.addEventListener('submit', e => { if (e.target.id === 'g-form') { e.preventDefault(); guardarGasto(!!(e.submitter && e.submitter.dataset.otro)); } if (e.target.id === 'cfg-form') { e.preventDefault(); probarClaveCfg(); } if (e.target.id === 'pv-form') { e.preventDefault(); guardarProveedor(); } if (e.target.id === 'cp-form') { e.preventDefault(); guardarConcepto(); } });
 document.addEventListener('input', e => {
   const el = e.target;
   if (el.hasAttribute('data-money')) moneyFormat(el);
@@ -2430,6 +2532,7 @@ document.addEventListener('input', e => {
   if (el.id === 'dr-correos') { driveCfg().correos = el.value; guardar(); }
   if (el.id === 'ia-key') { IA.key = el.value.trim(); guardarIA(); }
   if (el.id === 'ia-modelo') { IA.modelo = el.value.trim() || IA_MODELOS[0]; guardarIA(); }
+  if (el.id === 'cp-buscar') { cpBuscar = el.value; const pos = el.selectionStart; render(); const n = $('#cp-buscar'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch {} } }
   if (el.dataset.lista) { S.listas[el.dataset.lista] = el.value.split('\n').map(s => s.trim()).filter(Boolean); guardar(); }
 });
 document.addEventListener('change', async e => {
