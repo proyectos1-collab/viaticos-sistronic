@@ -1060,7 +1060,7 @@ async function aplicarIA(dataUrl) {
     toast(e.message || 'No se pudo leer la factura');
   } finally {
     iaLeyendo = false;
-    if (editando && editando.id === id) pintarGasto();
+    if (editando && editando.id === id) { pintarGasto(); avisoDupVivo(); }
   }
 }
 function vIA() {
@@ -1222,15 +1222,42 @@ function vDatosFactura(g) {
 }
 const normFact = x => String(x || '').toLowerCase().normalize('NFD').replace(/[^a-z0-9]/g, '').replace(/^0+/, '');
 /* Busca la misma factura (N° y proveedor) en todos los viajes */
+/* Factura repetida en cualquier viaje: mismo CUFE, o mismo número de factura (sin importar prefijos, espacios o ceros) del mismo emisor.
+   El emisor se compara por NIT; si alguno no tiene NIT, por nombre o razón social parecidos. Sin número: mismo emisor, fecha y valor. */
+const numFact = x => { const n = normFact(x); const d = (n.match(/\d+/g) || []).pop() || ''; return { n, d: d.replace(/^0+/, '') }; };
+const nombresDe = g => [g.proveedor, g.razon].map(normFact).filter(Boolean);
+function mismoEmisor(a, b) {
+  const na = soloDig(a.nit), nb = soloDig(b.nit);
+  if (na && nb) return na === nb;
+  const A = nombresDe(a), B = nombresDe(b);
+  if (!A.length || !B.length) return true;
+  return A.some(x => B.some(y => x === y || (x.length >= 4 && y.length >= 4 && (x.includes(y) || y.includes(x)))));
+}
 function facturaRepetida(g) {
-  const nf = normFact(g.factura), np = normFact(g.proveedor);
-  if (!nf) return null;
+  const cufe = normFact(g.cufe), f = numFact(g.factura);
   for (const vj of S.viajes) for (const x of vj.gastos) {
-    if (x.id === g.id || normFact(x.factura) !== nf) continue;
-    const xp = normFact(x.proveedor);
-    if (!np || !xp || np === xp) return { g: x, v: vj };
+    if (x.id === g.id) continue;
+    if (cufe && cufe.length > 20 && normFact(x.cufe) === cufe) return { g: x, v: vj, por: 'cufe' };
+    if (f.n) {
+      const xf = numFact(x.factura); if (!xf.n) continue;
+      const igual = xf.n === f.n || (f.d && f.d.length >= 3 && xf.d === f.d);
+      if (igual && mismoEmisor(g, x)) return { g: x, v: vj, por: 'numero' };
+    } else if (!normFact(x.factura) && g.fecha && x.fecha === g.fecha && Number(x.valor) === Number(g.valor) && Number(g.valor) > 0 && nombresDe(g).length && mismoEmisor(g, x)) return { g: x, v: vj, por: 'valor' };
   }
   return null;
+}
+function textoDup(d) {
+  const mismo = d.v.id === S.activo, donde = mismo ? 'en este viaje' : `en el viaje ${esc(d.v.cliente || 'sin nombre')}${d.v.cot ? ' · COT ' + esc(d.v.cot) : ''}`;
+  const qui = d.g.proveedor || d.g.razon;
+  return d.por === 'valor' ? `Ya hay un gasto ${qui ? 'de <b>' + esc(qui) + '</b> ' : ''}del mismo día y por el mismo valor ${donde} (${fmtFecha(d.g.fecha)}, ${fmtCOP(d.g.valor)}).`
+    : `La factura N° <b>${esc(d.g.factura)}</b>${qui ? ' de <b>' + esc(qui) + '</b>' : ''} ya está registrada ${donde} (${fmtFecha(d.g.fecha)}, ${fmtCOP(d.g.valor)})${d.por === 'cufe' ? ' — mismo CUFE' : ''}.`;
+}
+/* Aviso inmediato en el formulario (al escribir el número, el NIT o cuando la IA llena los datos) */
+function avisoDupVivo() {
+  const box = $('#g-dup'); if (!box || !editando || box.querySelector('[data-act=g-dup-ok]')) return;
+  try { leerFormGasto(); } catch {}
+  const d = facturaRepetida(editando);
+  box.innerHTML = d ? `<div class="note dup">⚠ <b>Posible factura repetida.</b> ${textoDup(d)}</div>` : '';
 }
 let dupOtro = false;
 async function guardarGasto(otro, forzar) {
@@ -1244,9 +1271,8 @@ async function guardarGasto(otro, forzar) {
     const d = facturaRepetida(g);
     if (d) {
       dupOtro = !!otro;
-      const mismo = d.v.id === S.activo, donde = mismo ? 'en este viaje' : `en el viaje ${esc(d.v.cliente || 'sin nombre')}${d.v.cot ? ' · COT ' + esc(d.v.cot) : ''}`;
       const box = $('#g-dup');
-      box.innerHTML = `<div class="note dup">⚠ <b>Factura repetida.</b> La factura N° <b>${esc(d.g.factura)}</b>${d.g.proveedor ? ' de <b>' + esc(d.g.proveedor) + '</b>' : ''} ya está registrada ${donde} (${fmtFecha(d.g.fecha)}, ${fmtCOP(d.g.valor)}). ¿Desea guardarla de todas formas?</div>
+      box.innerHTML = `<div class="note dup">⚠ <b>Factura repetida.</b> ${textoDup(d)} ¿Desea guardarla de todas formas?</div>
         <div class="row" style="margin-top:8px"><button type="button" class="btn danger" data-act="g-dup-ok">Sí, guardar igual</button><button type="button" class="btn" data-act="g-dup-no">Revisar</button></div>`;
       box.scrollIntoView({ block: 'center', behavior: 'smooth' });
       return;
@@ -2164,7 +2190,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '32 (26/11/2026)';
+const APP_VERSION = '33 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
@@ -2685,6 +2711,7 @@ document.addEventListener('change', async e => {
   const el = e.target;
   if (el.id === 'pv-nit') buscarRUESProveedor(false);
   if (el.id === 'g-nit') ruesEnGasto();
+  if (['g-factura', 'g-nit', 'g-prov', 'g-razon', 'g-fecha', 'g-valor', 'gx-cufe'].includes(el.id)) avisoDupVivo();
   if (el.dataset.vf && tab === 'legal') { const { L, html } = foHTML(vistaAbierta(viaje())); $('.fo-wrap').innerHTML = html; const n = $('#main .note'); if (n) { n.textContent = L.aviso; n.classList.toggle('ok', L.ok); } }
   else if (el.dataset.vf && el.type === 'date') { const y = window.scrollY; render(); window.scrollTo(0, y); }
   if ((el.id === 'g-file' || el.id === 'g-galeria') && el.files[0]) {
