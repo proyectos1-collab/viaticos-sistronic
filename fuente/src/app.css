@@ -341,3 +341,30 @@ input[readonly] { background: var(--surface-2); color: var(--muted); }
 .ia-pasos .btn { margin-top: 6px; display: inline-flex; text-decoration: none; }
 .ia-pasos input { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--fg); font: inherit; }
 .ia-activar { margin-top: 6px; background: none; border: 1px dashed var(--accent); color: var(--accent); border-radius: 10px; padding: 9px 12px; font: inherit; font-weight: 600; cursor: pointer; width: 100%; }
+/* Panel de aprobación (administración) */
+.adm-switch { display: flex; gap: 4px; background: var(--surface-2); border-radius: 999px; padding: 4px; margin: 0 0 12px; }
+.adm-switch button { flex: 1; border: 0; background: transparent; color: var(--muted); border-radius: 999px; padding: 8px 10px; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.adm-switch button.on { background: var(--surface); color: var(--fg); box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+.adm-n { background: var(--brand-red); color: #fff; border-radius: 999px; min-width: 20px; padding: 1px 6px; font-size: 12px; }
+.adm-seg { margin-bottom: 8px; }
+.adm-seg button { flex: 1; }
+.adm-seg b { opacity: .75; margin-left: 2px; }
+.adm-bar { display: flex; justify-content: space-between; align-items: center; margin: 4px 0 10px; gap: 8px; }
+.adm-bar .spin { width: 12px; height: 12px; vertical-align: -2px; }
+.adm-item .t { font-weight: 700; }
+.adm-volver { margin-bottom: 10px; }
+.adm-cab { padding: 14px; margin-bottom: 10px; }
+.adm-quien { font-size: 18px; font-weight: 700; margin: 8px 0 10px; }
+.adm-quien small { display: block; font-size: 13px; font-weight: 400; color: var(--muted); }
+.adm-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 10px; }
+.adm-kpis div { background: var(--surface-2); border-radius: 10px; padding: 8px; min-width: 0; }
+.adm-kpis small { display: block; font-size: 11px; color: var(--muted); line-height: 1.2; }
+.adm-kpis b { font-size: 15px; display: block; margin-top: 2px; overflow-wrap: anywhere; }
+.adm-datos { width: 100%; border-collapse: collapse; font-size: 14px; }
+.adm-datos td { padding: 4px 0; border-top: 1px solid var(--line); vertical-align: top; }
+.adm-datos td:first-child { color: var(--muted); width: 42%; padding-right: 8px; }
+.adm-arch { margin: 6px 0 4px; gap: 6px; }
+.adm-dec { margin: 14px 0 24px; gap: 8px; }
+.adm-dec > .btn { flex: 1; padding: 13px; font-size: 16px; }
+.modo-admin .fab { display: none; }
+.modo-admin main { padding-bottom: 24px; }

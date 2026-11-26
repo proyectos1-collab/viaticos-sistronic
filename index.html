@@ -352,6 +352,33 @@ input[readonly] { background: var(--surface-2); color: var(--muted); }
 .ia-pasos .btn { margin-top: 6px; display: inline-flex; text-decoration: none; }
 .ia-pasos input { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--fg); font: inherit; }
 .ia-activar { margin-top: 6px; background: none; border: 1px dashed var(--accent); color: var(--accent); border-radius: 10px; padding: 9px 12px; font: inherit; font-weight: 600; cursor: pointer; width: 100%; }
+/* Panel de aprobación (administración) */
+.adm-switch { display: flex; gap: 4px; background: var(--surface-2); border-radius: 999px; padding: 4px; margin: 0 0 12px; }
+.adm-switch button { flex: 1; border: 0; background: transparent; color: var(--muted); border-radius: 999px; padding: 8px 10px; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.adm-switch button.on { background: var(--surface); color: var(--fg); box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+.adm-n { background: var(--brand-red); color: #fff; border-radius: 999px; min-width: 20px; padding: 1px 6px; font-size: 12px; }
+.adm-seg { margin-bottom: 8px; }
+.adm-seg button { flex: 1; }
+.adm-seg b { opacity: .75; margin-left: 2px; }
+.adm-bar { display: flex; justify-content: space-between; align-items: center; margin: 4px 0 10px; gap: 8px; }
+.adm-bar .spin { width: 12px; height: 12px; vertical-align: -2px; }
+.adm-item .t { font-weight: 700; }
+.adm-volver { margin-bottom: 10px; }
+.adm-cab { padding: 14px; margin-bottom: 10px; }
+.adm-quien { font-size: 18px; font-weight: 700; margin: 8px 0 10px; }
+.adm-quien small { display: block; font-size: 13px; font-weight: 400; color: var(--muted); }
+.adm-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 10px; }
+.adm-kpis div { background: var(--surface-2); border-radius: 10px; padding: 8px; min-width: 0; }
+.adm-kpis small { display: block; font-size: 11px; color: var(--muted); line-height: 1.2; }
+.adm-kpis b { font-size: 15px; display: block; margin-top: 2px; overflow-wrap: anywhere; }
+.adm-datos { width: 100%; border-collapse: collapse; font-size: 14px; }
+.adm-datos td { padding: 4px 0; border-top: 1px solid var(--line); vertical-align: top; }
+.adm-datos td:first-child { color: var(--muted); width: 42%; padding-right: 8px; }
+.adm-arch { margin: 6px 0 4px; gap: 6px; }
+.adm-dec { margin: 14px 0 24px; gap: 8px; }
+.adm-dec > .btn { flex: 1; padding: 13px; font-size: 16px; }
+.modo-admin .fab { display: none; }
+.modo-admin main { padding-bottom: 24px; }
 
 :root{padding-top:env(safe-area-inset-top,0px)}
 [hidden]{display:none!important}
@@ -604,12 +631,23 @@ const TABS = [['gastos', 'Gastos', ICON.gastos], ['resumen', 'Resumen', ICON.res
 /* ---------- Render ---------- */
 function render() {
   const v = viaje();
+  if (modoAdmin && !esAdmin()) modoAdmin = false;
+  document.body.classList.toggle('modo-admin', modoAdmin);
+  $('#tabs').hidden = modoAdmin;
+  if (modoAdmin) {
+    const n = admPend();
+    $('#trip-name').textContent = '✅ Aprobaciones';
+    $('#trip-sub').textContent = `${n ? n + ' pendiente' + (n === 1 ? '' : 's') : 'Sin pendientes'} · panel de administración`;
+    $('#fab').hidden = true;
+    $('#main').innerHTML = `<div id="sync-chip">${syncChipHTML()}</div>` + vAdmSwitch() + vAprobaciones();
+    pintarAvatar(); return;
+  }
   $('#trip-name').textContent = tituloViaje(v);
   $('#trip-sub').textContent = subViaje(v);
   $('#tabs').innerHTML = TABS.map(([k, l, i]) => `<button role="tab" aria-selected="${tab === k}" data-tab="${k}">${i}<span>${l}</span></button>`).join('');
   $('#fab').hidden = !(tab === 'gastos' || tab === 'facturas');
   const main = $('#main');
-  main.innerHTML = `<div id="sync-chip">${syncChipHTML()}</div>` + ({ gastos: vGastos, resumen: vResumen, facturas: vFacturas, legal: vLegal, viaje: vViaje, config: vConfig, conceptos: vConceptos })[tab](v);
+  main.innerHTML = `<div id="sync-chip">${syncChipHTML()}</div>` + (tab === 'config' || tab === 'conceptos' ? '' : vAdmSwitch()) + ({ gastos: vGastos, resumen: vResumen, facturas: vFacturas, legal: vLegal, viaje: vViaje, config: vConfig, conceptos: vConceptos })[tab](v);
   pintarAvatar();
   main.focus({ preventScroll: true });
 }
@@ -669,13 +707,13 @@ function vRevision(v) {
   const cambio = r && r.estado !== 'aprobado' && r.firma && r.firma !== firmaViaje(v);
   let h = `<div class="card form rev-card">
     <div class="row" style="align-items:center;justify-content:space-between;flex-wrap:nowrap"><b>Estado de revisión</b>${chipRev(v)}</div>`;
-  if (r) h += `<div class="hint" style="margin:0">${REV[r.estado][0]} el ${fmtFH(r.fecha)}</div>`;
+  if (r) h += `<div class="hint" style="margin:0">${REV[r.estado][0]} el ${fmtFH(r.fecha)}${r.por ? ' por ' + esc(r.por.split('@')[0]) + ' (panel de aprobación)' : ''}</div>`;
   if (r && r.nota) h += `<div class="note">${r.estado === 'devuelto' ? '↩ Motivo de devolución: ' : '📝 '}${esc(r.nota)}</div>`;
   if (cambio) h += `<div class="note">⚠ Hubo cambios en los gastos después de enviarlo. Use <b>Enviar a revisión</b> de nuevo para que el revisor reciba la versión actualizada.</div>`;
   if (!r) h += `<div class="hint" style="margin:0">Cuando toque <b>Enviar a revisión</b>, el viaje queda marcado como enviado.</div>`;
   if (revDevolviendo) h += `<label class="field"><span>Motivo de la devolución (opcional)</span><textarea id="rev-nota" rows="2" placeholder="Ej.: falta la factura del hotel"></textarea></label>
     <div class="row"><button class="btn danger" data-act="rev-devuelto-ok">Marcar como devuelto</button><button class="btn" data-act="rev-cancelar">Cancelar</button></div>`;
-  else if (r) h += `<div class="row">${r.estado !== 'aprobado' ? '<button class="btn" data-act="rev-aprobado">✔ Marcar aprobado</button>' : ''}${r.estado !== 'devuelto' ? '<button class="btn" data-act="rev-devuelto">↩ Marcar devuelto</button>' : ''}</div>`;
+  else if (r && !r.por && !(r.estado === 'enviado' && driveUltimo && driveUltimo.ficha === 'ok')) h += `<div class="row">${r.estado !== 'aprobado' ? '<button class="btn" data-act="rev-aprobado">✔ Marcar aprobado</button>' : ''}${r.estado !== 'devuelto' ? '<button class="btn" data-act="rev-devuelto">↩ Marcar devuelto</button>' : ''}</div>`;
   return h + '</div>';
 }
 
@@ -934,7 +972,7 @@ async function enviarFinalCortes() {
     k = { id: uid(), n: cs.length + 1, desde: [desde, resto.map(g => g.fecha).filter(Boolean).sort()[0] || desde].sort()[0], hasta, adicional: 0, creado: new Date().toISOString(), final: true };
     cs.push(k); resto.forEach(g => { g.corte = k.id; }); await guardar();
   }
-  driveSubiendo = true; driveTipo = 'xlsx'; driveViaje = S.activo; driveCtx = { tipo: 'final', viajeId: S.activo, corteId: k ? k.id : '' }; correoEstado = null; driveUltimo = { estado: 'subiendo' }; render();
+  driveSubiendo = true; pdfSubidos = []; driveTipo = 'xlsx'; driveViaje = S.activo; driveCtx = { tipo: 'final', viajeId: S.activo, corteId: k ? k.id : '' }; correoEstado = null; driveUltimo = { estado: 'subiendo' }; render();
   try {
     const cfg = driveCfg(), sub = carpetaProyecto(v), mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
     const subir = async ({ blob, nombre }) => { const bytes = await zipCrcFix(new Uint8Array(await blob.arrayBuffer())); return { ...(await GW.subir(bytes, nombre, mime, cfg.carpetaId ? cfg.carpetaNombre || 'Carpeta compartida' : cfg.carpeta || 'Viáticos Sistronic', cfg.carpetaId || '', sub)), nombre }; };
@@ -949,6 +987,7 @@ async function enviarFinalCortes() {
     const res = await subir(await excelResumenCortes(v, true)); archivos.push(res);
     driveSubiendo = false; driveUltimo = { estado: 'ok', link: res.link, ruta: res.ruta, nombre: archivos.map(a => a.nombre).join(' y '), carpetaLink: res.carpetaLink, tipo: 'xlsx', ctx: { ...driveCtx }, archivos };
     toast('Legalización final enviada a revisión');
+    publicarFicha(driveUltimo);
     if (cfg.avisar && correosAviso().length) enviarAviso(); else render();
   } catch (e) { window.onDriveError(e.message || 'No se pudo subir la legalización final'); }
 }
@@ -1789,11 +1828,13 @@ async function pdfFacturas(vx, gastos, aviso) {
 }
 const nombreFacturasPDF = vx => (vx._corte ? nombreCorte(vx._corte) + ' - ' : vx._final ? 'Pendiente por cortar - ' : '') + nombreArchivoViaje(vx) + ' - Facturas.pdf';
 // Sube un solo PDF con todas las facturas (con foto) de lo que se envía. Si no hay fotos, no sube nada.
+let pdfSubidos = [];
 async function subirFacturasPDF(vx, carpeta, carpetaId, sub, aviso) {
   if (!vx.gastos.some(g => g.foto)) return 0;
   const { bytes, n } = await pdfFacturas(vx, vx.gastos, aviso);
   aviso && aviso('Subiendo el PDF de facturas…');
-  await GW.subir(bytes, nombreFacturasPDF(vx), 'application/pdf', carpeta, carpetaId, sub);
+  const r = await GW.subir(bytes, nombreFacturasPDF(vx), 'application/pdf', carpeta, carpetaId, sub);
+  pdfSubidos.push({ nombre: nombreFacturasPDF(vx), link: r.link, id: r.id, corteId: vx._corte ? vx._corte.id : '' });
   if (vx._corte) vx._corte.pdfFacturas = new Date().toISOString();
   return n;
 }
@@ -1961,6 +2002,7 @@ function comprimirFoto(file) {
 
 /* ---------- Viajes ---------- */
 function abrirViajes() {
+  if (modoAdmin) { ponerModoAdmin(false); render(); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><div class="sheet anim">
     <div class="sheet-head"><h3>Viajes</h3><button class="x" data-close="1" aria-label="Cerrar">×</button></div>
     <div class="list trip-list">${[...S.viajes].sort((a, b) => (b.inicio || '').localeCompare(a.inicio || '')).map(x => { const I = indicadores(x); return `<button class="item ${x.id === S.activo ? 'on' : ''}" data-trip="${x.id}"><span class="t">${esServ(x) ? '🧰 ' + SERV + (x.trabajador ? ' · ' + esc(x.trabajador.split(' ')[0]) : '') + ' · ' + fmtFecha(x.inicio) + '</span><span hidden>' : ''}${esc(x.cliente || 'Sin nombre')}${x.cot ? ' · COT ' + esc(x.cot) : ''}</span><span class="a num">${fmtCOP(I.gastado)}</span><span class="s">${esc(x.servicio)} · ${fmtFecha(x.inicio)}–${fmtFecha(x.fin)}</span><span class="s" style="text-align:right">${x.gastos.length} gastos</span><span class="s" style="grid-column:1/-1;margin-top:3px">${chipRev(x)}${x.revision ? ' <span style="margin-left:4px">' + fmtFH(x.revision.fecha) + '</span>' : ''}</span></button>`; }).join('')}</div>
@@ -2407,8 +2449,13 @@ const GW = {
       res = await this.api('POST', 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,webViewLink', body, 'multipart/related; boundary=' + b);
     }
     if (xlsx && res && res.id) await restr(true);
-    return { link: res.webViewLink || '', ruta: (carpeta || 'Viáticos') + (sub ? ' / ' + String(sub).split('/').join(' / ') : ''), carpetaLink: 'https://drive.google.com/drive/folders/' + destino };
+    return { id: res.id || '', link: res.webViewLink || '', ruta: (carpeta || 'Viáticos') + (sub ? ' / ' + String(sub).split('/').join(' / ') : ''), carpetaLink: 'https://drive.google.com/drive/folders/' + destino };
   }
+};
+GW.mail = function (l, asunto, html) {
+  const mime = `To: ${l.join(', ')}\r\nSubject: =?UTF-8?B?${utf8B64(asunto)}?=\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n${utf8B64(html).replace(/.{76}/g, '$&\r\n')}`;
+  const raw = utf8B64(mime).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return this.api('POST', 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send', JSON.stringify({ raw }), 'application/json; charset=UTF-8');
 };
 const b64Bytes = b64 => { const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; };
 const utf8B64 = t => { const u = new TextEncoder().encode(t); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
@@ -2482,14 +2529,12 @@ function instalarGoogleWeb() {
         let bytes = b64Bytes(b64);
         if (/\.xlsx$/i.test(nombre)) bytes = await zipCrcFix(bytes);
         return GW.subir(bytes, nombre, mime, carpeta, carpetaId, sub);
-      })().then(r => window.onDriveOk && onDriveOk(r.link, r.ruta, nombre, r.carpetaLink)).catch(e => window.onDriveError && onDriveError(err(e)));
+      })().then(r => window.onDriveOk && onDriveOk(r.link, r.ruta, nombre, r.carpetaLink, r.id)).catch(e => window.onDriveError && onDriveError(err(e)));
     },
     sendMail(para, asunto, html) {
       const l = String(para).split(/[,;\s]+/).filter(x => x.includes('@'));
       if (!l.length) { setTimeout(() => window.onMailError && onMailError('No hay correos válidos para avisar.'), 0); return; }
-      const mime = `To: ${l.join(', ')}\r\nSubject: =?UTF-8?B?${utf8B64(asunto)}?=\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n${utf8B64(html).replace(/.{76}/g, '$&\r\n')}`;
-      const raw = utf8B64(mime).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-      GW.api('POST', 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send', JSON.stringify({ raw }), 'application/json; charset=UTF-8')
+      GW.mail(l, asunto, html)
         .then(() => window.onMailOk && onMailOk(String(l.length))).catch(e => window.onMailError && onMailError(err(e)));
     }
   };
@@ -2778,7 +2823,7 @@ async function subirDrive(tipo, corteId) {
   if (!enAndroidGoogle()) { toast('Subir a Drive solo funciona en la app instalada'); return; }
   if (driveSubiendo) return;
   const v0 = viaje(), corte = corteId ? cortesDe(v0).find(x => x.id === corteId) : null;
-  driveSubiendo = true; driveTipo = tipo === 'corte' ? 'xlsx' : tipo; driveViaje = S.activo; driveCtx = { tipo, viajeId: S.activo, corteId: corte ? corte.id : '' }; correoEstado = null; driveUltimo = { estado: 'subiendo' }; render();
+  driveSubiendo = true; pdfSubidos = []; driveTipo = tipo === 'corte' ? 'xlsx' : tipo; driveViaje = S.activo; driveCtx = { tipo, viajeId: S.activo, corteId: corte ? corte.id : '' }; correoEstado = null; driveUltimo = { estado: 'subiendo' }; render();
   try {
     const vx = corte ? vistaCorte(v0, corte) : vistaAbierta(v0);
     const { blob, nombre } = tipo === 'backup' ? await copiaSeguridad(true) : await exportarExcel(true, vx);
@@ -2792,14 +2837,15 @@ async function subirDrive(tipo, corteId) {
     else Android.uploadDrive(b64, nombre, mime, c.carpeta || 'Viáticos Sistronic', sub);
   } catch (e) { window.onDriveError(e.message || 'No se pudo preparar el archivo'); }
 }
-window.onDriveOk = (link, ruta, nombre, carpetaLink) => {
-  driveSubiendo = false; driveUltimo = { estado: 'ok', link, ruta, nombre, carpetaLink, tipo: driveTipo }; toast(driveTipo === 'xlsx' ? 'Enviado a revisión' : 'Subido a Google Drive');
+window.onDriveOk = (link, ruta, nombre, carpetaLink, id) => {
+  driveSubiendo = false; driveUltimo = { estado: 'ok', link, ruta, nombre, carpetaLink, tipo: driveTipo, archivos: [{ nombre, link, id: id || '' }] }; toast(driveTipo === 'xlsx' ? 'Enviado a revisión' : 'Subido a Google Drive');
   const c = driveCfg();
   driveUltimo.ctx = { ...driveCtx };
   if (driveTipo === 'xlsx') {
     const vj = S.viajes.find(x => x.id === driveCtx.viajeId), k = vj && driveCtx.corteId ? cortesDe(vj).find(x => x.id === driveCtx.corteId) : null;
     if (k) { k.revision = { estado: 'enviado', nota: '', fecha: new Date().toISOString() }; guardar(); }
     else if (vj) { marcarRevision(vj, 'enviado'); guardar(); }
+    publicarFicha(driveUltimo);
   }
   if (driveTipo === 'xlsx' && c.avisar && correosAviso().length) enviarAviso(); else render();
 };
@@ -2834,9 +2880,182 @@ function vDriveEstado() {
       : m.estado === 'enviando' ? `<div class="ia-busy" style="margin-top:6px"><span class="spin"></span> <span class="txt">Enviando aviso a ${m.n} correo${m.n === 1 ? '' : 's'}…</span></div>`
       : m.estado === 'ok' ? `<div style="margin-top:6px">✉ Aviso enviado a ${m.n} correo${m.n === 1 ? '' : 's'}.</div>`
       : `<div style="margin-top:6px">⚠ No se envió el aviso: ${esc(m.msg)}</div><button class="btn" data-act="mail-enviar" style="margin-top:6px">Reintentar aviso</button>`;
-    return `<div class="note ok">✔ ${esc(d.nombre)} quedó en Drive › ${esc(d.ruta)}${d.link ? ` <button class="btn" data-act="drive-abrir" style="margin-top:6px">Abrir en Drive</button>` : ''}${aviso}</div>`;
+    const fi = d.ficha === 'enviando' ? `<div class="ia-busy" style="margin-top:6px"><span class="spin"></span> <span class="txt">Enviando al panel de aprobación…</span></div>` : d.ficha === 'ok' ? `<div style="margin-top:6px">📋 Ya aparece en el panel de aprobación de administración.</div>` : d.ficha ? `<div style="margin-top:6px">⚠ No llegó al panel de aprobación: ${esc(d.ficha)}</div><button class="btn" data-act="ficha-reintentar" style="margin-top:6px">Reintentar</button>` : '';
+    return `<div class="note ok">✔ ${esc(d.nombre)} quedó en Drive › ${esc(d.ruta)}${d.link ? ` <button class="btn" data-act="drive-abrir" style="margin-top:6px">Abrir en Drive</button>` : ''}${fi}${aviso}</div>`;
   }
   return `<div class="note">⚠ ${esc(d.msg)}</div>`;
+}
+/* ---------- Panel de aprobación (administración) ----------
+   Al enviar a revisión, la app del trabajador crea en SU Drive una "ficha" (JSON) con el resumen de la legalización
+   y la comparte con quienes aprueban (sin correo de Google). El aprobador ve las fichas, aprueba o devuelve, y la
+   decisión queda en la ficha: la app del trabajador la lee y actualiza el estado. */
+const ADMIN_CORREOS = ['administracion@sistronic.com.co', atob('bW9jLmxpYW1nQDU5cm9jbmFkZQ==').split('').reverse().join('')];
+const correoActual = () => (enAndroidGoogle() ? Android.getEmail() || '' : '').toLowerCase();
+const esAdmin = () => ADMIN_CORREOS.includes(correoActual());
+const FICHAS_CARPETA = 'Viáticos Sistronic - fichas de aprobación (no borrar)';
+const DRIVE = 'https://www.googleapis.com/drive/v3/files';
+let modoAdmin = false;
+function leerModoAdmin() { let m = ''; try { m = localStorage.getItem('admin:modo:' + correoActual()) || ''; } catch {} modoAdmin = esAdmin() && (m ? m === 'aprob' : correoActual().startsWith('administracion@')); }
+function ponerModoAdmin(on) { modoAdmin = !!on && esAdmin(); try { localStorage.setItem('admin:modo:' + correoActual(), on ? 'aprob' : 'mis'); } catch {} if (modoAdmin) admCargar(); }
+
+function datosFicha(d) {
+  const ctx = d.ctx || {}, v0 = S.viajes.find(x => x.id === ctx.viajeId); if (!v0) return null;
+  const k = ctx.corteId ? cortesDe(v0).find(x => x.id === ctx.corteId) : null, fin = ctx.tipo === 'final';
+  const v = fin ? v0 : k ? vistaCorte(v0, k) : vistaAbierta(v0);
+  const base = { app: 'viaticos-sistronic', ver: 1, viajeId: v0.id, corteId: k ? k.id : '', clase: fin ? 'final' : k ? 'parcial' : 'unica',
+    tipoLeg: fin ? `Legalización final (${cortesDe(v0).length} cortes)` : k ? `Legalización parcial (${nombreCorte(k)})` : 'Legalización de viáticos',
+    servicios: esServ(v0), trabajador: v0.trabajador || '', cedula: v0.cedula || '', email: correoActual(), cliente: v0.cliente || '', cot: v0.cot || '', os: v0.os || '', servicio: v0.servicio || '', ciudad: v0.ciudad || '',
+    inicio: v.inicio || '', fin: v.fin || '', enviado: new Date().toISOString(), archivos: [...(d.archivos || []), ...pdfSubidos.map(p => ({ ...p, pdf: true }))], carpetaLink: d.carpetaLink || '', ruta: d.ruta || '' };
+  base.nGastos = conValor(v).length; base.nFotos = v.gastos.filter(g => g.foto).length;
+  base.sistronic = sum(conValor(v).filter(g => g.pagadoPor === 'Sistronic'), g => g.valor);
+  if (fin) {
+    const R = filasResumenCortes(v0), T = R.total;
+    Object.assign(base, { total: T[6], anticipo: T[4] + T[5], saldo: T[8], sistronic: T[7], nGastos: T[3],
+      cortes: R.filas.map(f => ({ nombre: f[0], desde: f[1], hasta: f[2], n: f[3], total: f[6], saldo: f[8], estado: f[9] })) });
+  } else {
+    const L = legalizacion(v);
+    Object.assign(base, { total: L.total, anticipo: L.anticipo, saldo: L.diferencia, lineas: L.lineas.map(l => ({ d: l.d, n: l.n, t: l.t, f: l.f })) });
+  }
+  if (esServ(v0)) base.porOS = resumenPorOS(v).map(o => ({ os: o.os, cliente: o.cliente, n: o.n, emp: o.emp, sis: o.sis }));
+  return base;
+}
+async function publicarFicha(d) {
+  if (!d || d.estado !== 'ok' || !enAndroidGoogle()) return;
+  const datos = datosFicha(d); if (!datos) return;
+  const fichaId = datos.viajeId + ':' + (datos.clase === 'final' ? 'final' : datos.corteId || 'viaje');
+  d.ficha = 'enviando'; d.fichaDatos = datos; render();
+  try {
+    const q = `appProperties has { key='fichaId' and value='${GW.q(fichaId)}' } and 'me' in owners and trashed = false`;
+    const ex = (await GW.api('GET', `${DRIVE}?fields=files(id,appProperties)&q=${encodeURIComponent(q)}`)).files || [];
+    const prev = ex[0] && ex[0].appProperties || {};
+    datos.envios = (Number(prev.envios) || 0) + 1;
+    const props = { viaticosFicha: '1', fichaId, viajeId: datos.viajeId, corteId: datos.corteId, clase: datos.clase, estado: 'pendiente', enviado: datos.enviado, envios: String(datos.envios), nota: '', decididoPor: '', decididoEn: '' };
+    const nombre = `Ficha - ${datos.tipoLeg} - ${datos.servicios ? SERV : 'COT ' + (datos.cot || 's-n')} - ${datos.trabajador || datos.email}.json`.replace(/[\\/:*?"<>|]+/g, ' ').slice(0, 150);
+    const b = 'ficha' + Date.now(), meta = ex[0] ? { name: nombre, appProperties: props } : { name: nombre, appProperties: props, parents: [await GW.carpeta(FICHAS_CARPETA, 'root')] };
+    const body = new Blob([`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: application/json\r\n\r\n`, JSON.stringify(datos), `\r\n--${b}--`]);
+    const r = await GW.api(ex[0] ? 'PATCH' : 'POST', `https://www.googleapis.com/upload/drive/v3/files${ex[0] ? '/' + ex[0].id : ''}?uploadType=multipart&fields=id`, body, 'multipart/related; boundary=' + b);
+    const yo = correoActual(), compartir = (id, role) => Promise.all(ADMIN_CORREOS.filter(c => c !== yo).map(c =>
+      GW.api('POST', `${DRIVE}/${id}/permissions?sendNotificationEmail=false&supportsAllDrives=true`, JSON.stringify({ role, type: 'user', emailAddress: c }), 'application/json; charset=UTF-8').then(() => true, () => false)));
+    const ok = await compartir(r.id, 'writer');
+    if (!ok.some(Boolean) && ADMIN_CORREOS.some(c => c !== yo)) throw new Error('Google no permitió compartir la ficha con administración');
+    for (const a of datos.archivos) if (a.id) await compartir(a.id, 'reader');
+    d.ficha = 'ok';
+  } catch (e) { d.ficha = (e && e.message) || 'error desconocido'; }
+  render();
+}
+
+/* Lado del trabajador: lee las decisiones de sus fichas */
+let fichasRevisadas = 0;
+async function revisarFichas(forzar) {
+  if (!enAndroidGoogle() || !GW.valido() || !S) return;
+  if (!forzar && Date.now() - fichasRevisadas < 110000) return;
+  fichasRevisadas = Date.now();
+  try {
+    const q = "appProperties has { key='viaticosFicha' and value='1' } and 'me' in owners and trashed = false";
+    const fs = (await GW.api('GET', `${DRIVE}?pageSize=200&fields=files(id,appProperties)&q=${encodeURIComponent(q)}`)).files || [];
+    let cambios = [];
+    for (const f of fs) {
+      const p = f.appProperties || {}; if (!/^(aprobado|devuelto)$/.test(p.estado) || !p.decididoEn) continue;
+      const v = S.viajes.find(x => x.id === p.viajeId); if (!v) continue;
+      const k = p.corteId ? cortesDe(v).find(x => x.id === p.corteId) : null;
+      const quien = (p.decididoPor || '').split('@')[0];
+      const aplicar = (obj, setter) => { const r = obj.revision; if (r && r.estado === p.estado && (r.nota || '') === (p.nota || '')) return false; if (r && r.fecha && r.fecha > p.decididoEn) return false; setter(); return true; };
+      let hubo = false;
+      if (p.clase === 'final' || !k) hubo = aplicar(v, () => { marcarRevision(v, p.estado, p.nota || ''); v.revision.fecha = p.decididoEn; v.revision.por = p.decididoPor || ''; }) || hubo;
+      if (k) hubo = aplicar(k, () => { k.revision = { estado: p.estado, nota: p.nota || '', fecha: p.decididoEn, por: p.decididoPor || '' }; }) || hubo;
+      if (hubo) cambios.push(`${p.estado === 'aprobado' ? '✔ Aprobada' : '↩ Devuelta'}: ${k && p.clase !== 'final' ? nombreCorte(k) + ' de ' : ''}${tituloViaje(v).replace('🧰 ', '')}${quien ? ' (' + quien + ')' : ''}`);
+    }
+    if (cambios.length) { await guardar(); render(); toast(cambios.join(' · ')); }
+  } catch {}
+}
+
+/* Lado de administración */
+let ADM = { fichas: [], cargando: false, error: '', fecha: 0, filtro: 'pendiente', abierta: '', devolviendo: false, decidiendo: false };
+const admCache = new Map();
+async function admCargar() {
+  if (!esAdmin() || ADM.cargando) return;
+  if (!GW.valido()) { ADM.error = 'auth'; render(); return; }
+  ADM.cargando = true; ADM.error = ''; if (modoAdmin) render();
+  try {
+    const q = "appProperties has { key='viaticosFicha' and value='1' } and trashed = false";
+    let fs = [], tok = '';
+    do { const r = await GW.api('GET', `${DRIVE}?pageSize=200&orderBy=modifiedTime desc&fields=nextPageToken,files(id,modifiedTime,appProperties,owners(displayName,emailAddress))&q=${encodeURIComponent(q)}${tok ? '&pageToken=' + tok : ''}`); fs = fs.concat(r.files || []); tok = r.nextPageToken || ''; } while (tok && fs.length < 1000);
+    await Promise.all(fs.map(async f => {
+      const c = admCache.get(f.id), env = (f.appProperties || {}).enviado;
+      if (c && c.enviado === env) return;
+      try { const d = await GW.api('GET', `${DRIVE}/${f.id}?alt=media`); admCache.set(f.id, { enviado: env, d }); } catch {}
+    }));
+    ADM.fichas = fs.filter(f => admCache.has(f.id)).map(f => ({ id: f.id, p: f.appProperties || {}, d: admCache.get(f.id).d, dueño: (f.owners || [])[0] || {} }))
+      .sort((a, b) => String(b.p.enviado).localeCompare(String(a.p.enviado)));
+    ADM.fecha = Date.now();
+  } catch (e) { ADM.error = e.message || 'No se pudo cargar'; }
+  ADM.cargando = false; if (modoAdmin) render(); else pintarAdmSwitch();
+}
+const admPend = () => ADM.fichas.filter(f => f.p.estado === 'pendiente').length;
+function vAdmSwitch() {
+  if (!esAdmin()) return '';
+  const n = admPend();
+  return `<div class="adm-switch no-print" id="adm-switch"><button class="${modoAdmin ? 'on' : ''}" data-act="adm-modo" data-m="aprob">✅ Aprobaciones${n ? ` <b class="adm-n">${n}</b>` : ''}</button><button class="${modoAdmin ? '' : 'on'}" data-act="adm-modo" data-m="mis">🧾 Mis viáticos</button></div>`;
+}
+function pintarAdmSwitch() { const el = $('#adm-switch'); if (el) el.outerHTML = vAdmSwitch(); }
+const fechaCorta = iso => iso ? fmtFecha(String(iso).slice(0, 10)) : '';
+const tituloFicha = d => d.servicios ? `🧰 ${SERV}` : [d.cliente || 'Sin cliente', d.cot ? 'COT ' + d.cot : ''].filter(Boolean).join(' · ');
+const ADM_EST = { pendiente: ['Pendiente', 'st-SIS'], aprobado: ['Aprobada', 'st-LEGALIZADO'], devuelto: ['Devuelta', 'st-PENDIENTE'] };
+function vAprobaciones() {
+  if (ADM.abierta) { const f = ADM.fichas.find(x => x.id === ADM.abierta); if (f) return vFichaDetalle(f); ADM.abierta = ''; }
+  const cuenta = e => ADM.fichas.filter(f => f.p.estado === e).length;
+  const lista = ADM.fichas.filter(f => f.p.estado === ADM.filtro);
+  let h = `<div class="seg adm-seg" role="group">${['pendiente', 'aprobado', 'devuelto'].map(e => `<button aria-pressed="${ADM.filtro === e}" data-act="adm-filtro" data-f="${e}">${e === 'pendiente' ? 'Pendientes' : e === 'aprobado' ? 'Aprobadas' : 'Devueltas'} <b>${cuenta(e)}</b></button>`).join('')}</div>
+  <div class="adm-bar"><span class="hint" style="margin:0">${ADM.cargando ? '<span class="spin"></span> Actualizando…' : ADM.fecha ? 'Actualizado ' + fmtFH(new Date(ADM.fecha).toISOString()).slice(-5) : ''}</span><button class="btn" data-act="adm-recargar" ${ADM.cargando ? 'disabled' : ''}>↻ Actualizar</button></div>`;
+  if (ADM.error === 'auth') h += `<div class="note">La sesión de Google venció. <button class="btn primary" data-act="adm-login" style="margin-top:6px">Volver a entrar</button></div>`;
+  else if (ADM.error) h += `<div class="note">⚠ ${esc(ADM.error)}</div>`;
+  if (!lista.length && !ADM.cargando) h += `<div class="empty">${ADM.filtro === 'pendiente' ? 'No hay legalizaciones pendientes por aprobar. 🎉<br><small>Aquí aparecen las que los trabajadores envían a revisión desde la app.</small>' : 'No hay legalizaciones en esta lista.'}</div>`;
+  h += `<div class="list adm-list">${lista.map(f => { const d = f.d, p = f.p; return `<button class="item adm-item" data-act="adm-abrir" data-id="${esc(f.id)}">
+    <span class="t">${esc(d.trabajador || f.dueño.displayName || d.email)}</span><span class="a num">${fmtCOP(d.total)}</span>
+    <span class="s">${esc(tituloFicha(d))}</span><span class="s" style="text-align:right">Saldo ${fmtCOP(d.saldo)}</span>
+    <span class="s" style="grid-column:1/-1">${esc(d.tipoLeg)} · ${fechaCorta(d.inicio)} a ${fechaCorta(d.fin)}</span>
+    <span class="s" style="grid-column:1/-1;margin-top:3px"><span class="chip ${ADM_EST[p.estado][1]}">${ADM_EST[p.estado][0].toUpperCase()}</span> ${p.estado === 'pendiente' ? 'Enviada ' + fmtFH(p.enviado) + (Number(p.envios) > 1 ? ` · <b>reenvío ${p.envios}</b>` : '') : fmtFH(p.decididoEn) + (p.decididoPor ? ' por ' + esc(p.decididoPor.split('@')[0]) : '')}</span></button>`; }).join('')}</div>`;
+  return h;
+}
+function vFichaDetalle(f) {
+  const d = f.d, p = f.p, fila = (k, x) => x === '' || x == null ? '' : `<tr><td>${esc(k)}</td><td><b>${x}</b></td></tr>`;
+  let h = `<button class="btn adm-volver" data-act="adm-volver">← Volver a la lista</button>
+  <div class="card adm-cab"><div class="row" style="justify-content:space-between;align-items:center;flex-wrap:nowrap"><b>${esc(d.tipoLeg)}</b><span class="chip ${ADM_EST[p.estado][1]}">${ADM_EST[p.estado][0].toUpperCase()}</span></div>
+  <div class="adm-quien">${esc(d.trabajador || f.dueño.displayName || '')}<small>${esc(d.email || f.dueño.emailAddress || '')}</small></div>
+  <div class="adm-kpis"><div><small>Total legalizado</small><b class="num">${fmtCOP(d.total)}</b></div><div><small>Anticipo</small><b class="num">${fmtCOP(d.anticipo)}</b></div><div><small>${d.saldo >= 0 ? 'Saldo a favor empresa' : 'Saldo a favor trabajador'}</small><b class="num">${fmtCOP(Math.abs(d.saldo))}</b></div></div>
+  <table class="adm-datos">${fila('Proyecto', esc(tituloFicha(d)))}${fila('Servicio', esc(d.servicio && d.servicio !== SERV ? d.servicio : ''))}${fila('Ciudad', esc(d.ciudad))}${fila('Fechas', `${fechaCorta(d.inicio)} a ${fechaCorta(d.fin)}`)}${fila('Gastos', `${d.nGastos} (${d.nFotos} con foto de factura)`)}${fila('Pagado por Sistronic', d.sistronic ? fmtCOP(d.sistronic) : '')}${fila('Enviada', fmtFH(p.enviado) + (Number(p.envios) > 1 ? ` (reenvío ${p.envios})` : ''))}</table></div>`;
+  if (p.estado !== 'pendiente') h += `<div class="note ${p.estado === 'aprobado' ? 'ok' : ''}">${p.estado === 'aprobado' ? '✔ Aprobada' : '↩ Devuelta'} el ${fmtFH(p.decididoEn)}${p.decididoPor ? ' por ' + esc(p.decididoPor) : ''}${p.nota ? '<br>Motivo: ' + esc(p.nota) : ''}</div>`;
+  const arch = d.archivos || [];
+  h += `<div class="row adm-arch">${arch.map((a, i) => a.link ? `<button class="btn" data-act="adm-link" data-i="${i}">${a.pdf ? '📄 PDF de facturas' : arch.filter(x => !x.pdf).length > 1 && /^Resumen/.test(a.nombre) ? '📊 Resumen de cortes' : '📊 Excel de legalización'}</button>` : '').join('')}${d.carpetaLink ? `<button class="btn" data-act="adm-link" data-i="carpeta">📁 Carpeta</button>` : ''}</div>`;
+  if (d.lineas) h += `<h2>Formato FO-AD-03</h2><div class="tbl-wrap"><table><tr><th>Concepto</th><th class="r">Cant.</th><th>Factura</th><th class="r">Valor</th></tr>${d.lineas.map(l => `<tr><td>${esc(l.d)}</td><td class="r">${l.n}</td><td>${esc(l.f)}</td><td class="r">${fmtCOP(l.t)}</td></tr>`).join('')}<tr class="tot"><td colspan="3"><b>Total</b></td><td class="r"><b>${fmtCOP(d.total)}</b></td></tr></table></div>`;
+  if (d.cortes) h += `<h2>Cortes del proyecto</h2><div class="tbl-wrap"><table><tr><th>Corte</th><th class="r">Gastos</th><th class="r">Legalizado</th><th class="r">Saldo</th><th>Estado</th></tr>${d.cortes.map(c => `<tr><td>${esc(c.nombre)}</td><td class="r">${c.n}</td><td class="r">${fmtCOP(c.total)}</td><td class="r">${fmtCOP(c.saldo)}</td><td>${esc(c.estado)}</td></tr>`).join('')}</table></div>`;
+  if (d.porOS && d.porOS.length) h += `<h2>Resumen por orden de servicio</h2><div class="tbl-wrap"><table><tr><th>OS</th><th>Cliente</th><th class="r">Gastos</th><th class="r">Empleado</th><th class="r">Sistronic</th></tr>${d.porOS.map(o => `<tr><td>${esc(o.os || 'Sin OS')}</td><td>${esc(o.cliente)}</td><td class="r">${o.n}</td><td class="r">${fmtCOP(o.emp)}</td><td class="r">${fmtCOP(o.sis)}</td></tr>`).join('')}</table></div>`;
+  if (ADM.devolviendo) h += `<div class="card form adm-dec"><label class="field"><span>Motivo de la devolución</span><textarea id="adm-nota" rows="3" placeholder="Ej.: falta la factura del hotel del 12/11"></textarea></label><div class="row"><button class="btn danger" data-act="adm-devolver-ok" ${ADM.decidiendo ? 'disabled' : ''}>↩ Devolver al trabajador</button><button class="btn" data-act="adm-cancelar">Cancelar</button></div></div>`;
+  else h += `<div class="row adm-dec">${p.estado !== 'aprobado' ? `<button class="btn primary" data-act="adm-aprobar" ${ADM.decidiendo ? 'disabled' : ''}>✔ Aprobar</button>` : ''}${p.estado !== 'devuelto' ? `<button class="btn" data-act="adm-devolver" ${ADM.decidiendo ? 'disabled' : ''}>↩ Devolver</button>` : ''}</div>`;
+  if (ADM.decidiendo) h += `<div class="note ia-busy"><span class="spin"></span> <span class="txt">Guardando la decisión…</span></div>`;
+  return h;
+}
+async function admDecidir(estado, nota) {
+  const f = ADM.fichas.find(x => x.id === ADM.abierta); if (!f || ADM.decidiendo) return;
+  ADM.decidiendo = true; render();
+  try {
+    const actual = await GW.api('GET', `${DRIVE}/${f.id}?fields=appProperties`);
+    if (actual.appProperties && actual.appProperties.enviado !== f.p.enviado) { ADM.decidiendo = false; ADM.devolviendo = false; toast('El trabajador la reenvió con cambios. Revise la versión nueva.'); await admCargar(); return; }
+    const props = { estado, nota: (nota || '').slice(0, 100), decididoPor: correoActual(), decididoEn: new Date().toISOString() };
+    await GW.api('PATCH', `${DRIVE}/${f.id}?fields=id`, JSON.stringify({ appProperties: props }), 'application/json; charset=UTF-8');
+    Object.assign(f.p, props); ADM.devolviendo = false; ADM.decidiendo = false;
+    toast(estado === 'aprobado' ? 'Legalización aprobada' : 'Legalización devuelta al trabajador');
+    const d = f.d, para = d.email || f.dueño.emailAddress;
+    if (para) {
+      const ap = estado === 'aprobado', asunto = `${d.tipoLeg} ${ap ? 'APROBADA' : 'DEVUELTA'}: ${tituloFicha(d).replace('🧰 ', '')}`;
+      const html = `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1a1a1a;max-width:560px"><p>Hola${d.trabajador ? ' ' + esc(d.trabajador.split(' ')[0]) : ''},</p>
+<p>Su <b>${esc(d.tipoLeg.toLowerCase())}</b> de <b>${esc(tituloFicha(d).replace('🧰 ', ''))}</b> (${fechaCorta(d.inicio)} a ${fechaCorta(d.fin)}, total ${fmtCOP(d.total)}) fue <b style="color:${ap ? '#1a7f37' : '#b42318'}">${ap ? 'aprobada' : 'devuelta'}</b>.</p>
+${!ap && nota ? `<p><b>Motivo:</b> ${esc(nota)}</p><p>Corrija los gastos en la app y vuelva a tocar <b>Enviar a revisión</b>.</p>` : ''}
+<p style="color:#777;font-size:12px">Enviado desde el panel de aprobación de la app Viáticos Sistronic por ${esc(correoActual())}.</p></div>`;
+      GW.mail([para], asunto, html).catch(() => toast('La decisión quedó guardada, pero no se pudo enviar el correo al trabajador'));
+    }
+    ADM.abierta = ''; render(); window.scrollTo(0, 0);
+  } catch (e) { ADM.decidiendo = false; toast(e.message || 'No se pudo guardar la decisión'); render(); }
 }
 /* Clave para entrar a Configuración (se guarda solo su huella SHA-256) */
 const CLAVE_CFG = 'dbff5341acad5e2a58db4efd5e72e2d9a0a843a28e02b1183c68162d0a3a3de6';
@@ -2846,7 +3065,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '48 (26/11/2026)';
+const APP_VERSION = '49 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
@@ -3003,7 +3222,7 @@ function pintarLogin() {
     <p class="hint">Sus gastos se guardan en este equipo y en una carpeta privada de la app en su Google Drive, para verlos desde cualquier equipo con la misma cuenta.</p>
   </div>`;
 }
-window.onLoginOk = email => { programarSync(300); loginEstado = { cargando: false, msg: '', config: false }; const p = perfil(); toast('Bienvenido, ' + (p ? p.corto : email)); pintarLogin(); render(); };
+window.onLoginOk = email => { programarSync(300); leerModoAdmin(); if (esAdmin()) admCargar(); setTimeout(() => revisarFichas(true), 4000); loginEstado = { cargando: false, msg: '', config: false }; const p = perfil(); toast('Bienvenido, ' + (p ? p.corto : email)); pintarLogin(); render(); };
 window.onLoginError = (msg, config) => { loginEstado = { cargando: false, msg, config: config === 'config' }; pintarLogin(); };
 window.onLogout = () => { pintarLogin(); render(); };
 
@@ -3313,6 +3532,18 @@ document.addEventListener('click', async e => {
     case 'drive-xlsx': if (cortesDe(viaje()).length) enviarFinalCortes(); else subirDrive('xlsx'); break;
     case 'cortes-resumen': try { await excelResumenCortes(viaje()); } catch (err) { toast('No se pudo exportar: ' + err.message); } break;
     case 'drive-backup': subirDrive('backup'); break;
+    case 'adm-modo': ponerModoAdmin(t.dataset.m === 'aprob'); ADM.abierta = ''; render(); window.scrollTo(0, 0); break;
+    case 'adm-filtro': ADM.filtro = t.dataset.f; render(); break;
+    case 'adm-recargar': admCargar(); break;
+    case 'adm-login': GW.pedir().then(() => { ADM.error = ''; admCargar(); }).catch(e => toast(e.message)); break;
+    case 'adm-abrir': ADM.abierta = t.dataset.id; ADM.devolviendo = false; render(); window.scrollTo(0, 0); break;
+    case 'adm-volver': ADM.abierta = ''; ADM.devolviendo = false; render(); window.scrollTo(0, 0); break;
+    case 'adm-link': { const f = ADM.fichas.find(x => x.id === ADM.abierta); if (!f) break; const u = t.dataset.i === 'carpeta' ? f.d.carpetaLink : (f.d.archivos[Number(t.dataset.i)] || {}).link; if (u) Android.openUrl(u); break; }
+    case 'adm-aprobar': admDecidir('aprobado', ''); break;
+    case 'adm-devolver': ADM.devolviendo = true; render(); setTimeout(() => { const x = $('#adm-nota'); if (x) { x.focus(); x.scrollIntoView({ block: 'center' }); } }, 50); break;
+    case 'adm-devolver-ok': { const nota = ($('#adm-nota')?.value || '').trim(); if (!nota) { toast('Escriba el motivo para que el trabajador sepa qué corregir'); break; } admDecidir('devuelto', nota); break; }
+    case 'adm-cancelar': ADM.devolviendo = false; render(); break;
+    case 'ficha-reintentar': if (driveUltimo) publicarFicha(driveUltimo); break;
     case 'drive-abrir': if (driveUltimo && driveUltimo.link) Android.openUrl(driveUltimo.link); break;
     case 'login': loginEstado = { cargando: true, msg: '', config: false }; pintarLogin(); Android.login(); break;
     case 'login-saltar': { const el = $('#login'); if (el) el.remove(); toast('Configure el acceso a Google para activar el inicio de sesión'); break; }
@@ -3461,6 +3692,10 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#sheet'
   try { if (location.hash && TABS.some(t => t[0] === location.hash.slice(1))) tab = location.hash.slice(1); } catch {}
   render();
   // Guía de la clave de IA: no depende de que la sincronización termine (puede quedar esperando un toque)
+  leerModoAdmin(); if (esAdmin()) setTimeout(admCargar, 1500);
+  setTimeout(() => revisarFichas(true), 5000);
+  setInterval(() => { if (document.visibilityState !== 'visible') return; revisarFichas(); if (modoAdmin && !ADM.cargando && Date.now() - ADM.fecha > 110000) admCargar(); }, 30000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { setTimeout(() => revisarFichas(true), 3000); if (modoAdmin) setTimeout(admCargar, 1000); } });
   const revisarIA = () => { if ((!iaLista() || !IA.propia) && !syncCorriendo) ofrecerClaveIA(); };
   setTimeout(revisarIA, 6000); setInterval(revisarIA, 60000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') setTimeout(revisarIA, 2500); });
