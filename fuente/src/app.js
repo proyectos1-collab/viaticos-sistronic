@@ -536,7 +536,10 @@ async function enviarFinalCortes() {
   try {
     const cfg = driveCfg(), sub = carpetaProyecto(v), mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
     const subir = async ({ blob, nombre }) => { const bytes = await zipCrcFix(new Uint8Array(await blob.arrayBuffer())); return { ...(await GW.subir(bytes, nombre, mime, cfg.carpetaId ? cfg.carpetaNombre || 'Carpeta compartida' : cfg.carpeta || 'Viáticos Sistronic', cfg.carpetaId || '', sub)), nombre }; };
-    await subirSoportesPDF(v.gastos, cfg.carpetaId ? cfg.carpetaNombre || 'Carpeta compartida' : cfg.carpeta || 'Viáticos Sistronic', cfg.carpetaId || '', sub, t => { driveUltimo = { estado: 'subiendo', txt: t }; render(); });
+    const dest = [cfg.carpetaId ? cfg.carpetaNombre || 'Carpeta compartida' : cfg.carpeta || 'Viáticos Sistronic', cfg.carpetaId || '', sub], avisoPDF = t => { driveUltimo = { estado: 'subiendo', txt: t }; render(); };
+    // PDF de facturas del último corte y de los cortes anteriores que aún no lo tengan
+    for (const kk of cortesDe(v)) if (kk === k || !kk.pdfFacturas) await subirFacturasPDF(vistaCorte(v, kk), ...dest, avisoPDF);
+    await guardar();
     driveUltimo = { estado: 'subiendo' }; render();
     const archivos = [];
     if (k) { archivos.push(await subir(await exportarExcel(true, vistaCorte(v, k)))); k.revision = { estado: 'enviado', nota: '', fecha: new Date().toISOString() }; }
@@ -1139,53 +1142,80 @@ async function guardarGasto(otro, forzar) {
 function cerrarSheet() { $('#sheet').innerHTML = ''; editando = null; fotoTmp = undefined; }
 
 /* ---------- Soportes en PDF (una factura por archivo) ---------- */
-function pdfTexto(t) { let o = ''; for (const ch of String(t)) { const c = ch.charCodeAt(0); o += c > 255 ? '?' : (ch === '(' || ch === ')' || ch === '\\') ? '\\' + ch : c > 126 || c < 32 ? '\\' + c.toString(8).padStart(3, '0') : ch; } return o; }
+function pdfTexto(t) { let o = ''; const W = { '\u2026': 133, '\u2014': 151, '\u2013': 150, '\u201c': 147, '\u201d': 148, '\u2018': 145, '\u2019': 146, '\u20ac': 128 }; for (let ch of String(t)) { if (W[ch]) ch = String.fromCharCode(W[ch]); const c = ch.charCodeAt(0); o += c > 255 ? '?' : (ch === '(' || ch === ')' || ch === '\\') ? '\\' + ch : c > 126 || c < 32 ? '\\' + c.toString(8).padStart(3, '0') : ch; } return o; }
 async function fotoJPEG(src) {
   if (/^data:image\/jpe?g/i.test(src)) return { bytes: b64Bytes(src.split(',')[1]), im: await cargarImagen(src) };
   const im = await cargarImagen(src), c = lienzo(im.width, im.height), x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); x.drawImage(im, 0, 0);
   const d = c.toDataURL('image/jpeg', 0.85); return { bytes: b64Bytes(d.split(',')[1]), im };
 }
-// Arma un PDF de una página tamaño carta con la foto ajustada y un encabezado con los datos del gasto
-async function pdfFactura(src, titulo, detalle) {
-  const { bytes, im } = await fotoJPEG(src), W = 612, H = 792, m = 28, top = 58;
-  const k = Math.min((W - 2 * m) / im.width, (H - top - m) / im.height), iw = im.width * k, ih = im.height * k, ix = (W - iw) / 2, iy = H - top - ih;
-  const cont = `BT /F1 12 Tf ${m} ${H - 30} Td (${pdfTexto(titulo)}) Tj ET\nBT /F2 9 Tf ${m} ${H - 45} Td (${pdfTexto(detalle)}) Tj ET\nq ${iw.toFixed(2)} 0 0 ${ih.toFixed(2)} ${ix.toFixed(2)} ${iy.toFixed(2)} cm /Im1 Do Q`;
-  const enc = new TextEncoder(), partes = [], offs = []; let largo = 0;
+// PDF de varias páginas (tamaño carta): índice con todas las facturas y luego una página por factura con su encabezado
+function armarPDF(paginas) {
+  // paginas: [{ cont: 'operadores', img?: { bytes, w, h } }]
+  const partes = [], offs = []; let largo = 0;
   const add = x => { const b = typeof x === 'string' ? Uint8Array.from(x, c => c.charCodeAt(0) & 255) : x; partes.push(b); largo += b.length; };
   const obj = (n, cuerpo) => { offs[n] = largo; add(`${n} 0 obj\n`); for (const c of [].concat(cuerpo)) add(c); add('\nendobj\n'); };
+  const N = paginas.length, base = 5, ids = paginas.map((_, i) => base + i * 3);
   add('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
   obj(1, '<< /Type /Catalog /Pages 2 0 R >>');
-  obj(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
-  obj(3, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 5 0 R /F2 6 0 R >> /XObject << /Im1 7 0 R >> >> /Contents 4 0 R >>`);
-  obj(4, [`<< /Length ${cont.length} >>\nstream\n`, cont, '\nendstream']);
-  obj(5, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
-  obj(6, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
-  obj(7, [`<< /Type /XObject /Subtype /Image /Width ${im.width} /Height ${im.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${bytes.length} >>\nstream\n`, bytes, '\nendstream']);
-  const xref = largo; add(`xref\n0 8\n0000000000 65535 f \n${offs.slice(1).map(o => String(o).padStart(10, '0') + ' 00000 n \n').join('')}trailer\n<< /Size 8 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
-  const out = new Uint8Array(largo); let p = 0; for (const b of partes) { out.set(b, p); p += b.length; } void enc;
+  obj(2, `<< /Type /Pages /Kids [${ids.map(i => i + ' 0 R').join(' ')}] /Count ${N} >>`);
+  obj(3, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
+  obj(4, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
+  paginas.forEach((pg, i) => {
+    const id = ids[i];
+    obj(id, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >>${pg.img ? ` /XObject << /Im1 ${id + 2} 0 R >>` : ''} >> /Contents ${id + 1} 0 R >>`);
+    const c = Uint8Array.from(pg.cont, ch => ch.charCodeAt(0) & 255);
+    obj(id + 1, [`<< /Length ${c.length} >>\nstream\n`, c, '\nendstream']);
+    if (pg.img) obj(id + 2, [`<< /Type /XObject /Subtype /Image /Width ${pg.img.w} /Height ${pg.img.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${pg.img.bytes.length} >>\nstream\n`, pg.img.bytes, '\nendstream']);
+    else obj(id + 2, '<< >>');
+  });
+  const total = base + N * 3, xref = largo;
+  let tabla = `xref\n0 ${total}\n0000000000 65535 f \n`; for (let n = 1; n < total; n++) tabla += String(offs[n] || 0).padStart(10, '0') + ' 00000 n \n';
+  add(tabla + `trailer\n<< /Size ${total} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+  const out = new Uint8Array(largo); let p = 0; for (const b of partes) { out.set(b, p); p += b.length; }
   return out;
 }
-function nombrePDF(g, usados) {
-  const limpiar = x => String(x || '').replace(/[\\/:*?"<>|#%]+/g, ' ').replace(/\s+/g, ' ').trim();
-  let n = limpiar(`Factura ${g.fecha || ''} ${(g.proveedor || g.razon || g.concepto || '').slice(0, 40)} ${g.factura ? 'N ' + g.factura.replace(/\s+/g, '') : fmtCOP(g.valor).replace(/\s/g, '')}`);
-  if (usados.has(n.toLowerCase())) n += ' ' + g.id.slice(-4);
-  usados.add(n.toLowerCase()); return n + '.pdf';
-}
-// Sube a la carpeta del proyecto un PDF por cada gasto con foto. Salta los que ya se subieron con la misma foto.
-async function subirSoportesPDF(gastos, carpeta, carpetaId, sub, aviso) {
-  const con = gastos.filter(g => g.foto), usados = new Set(); let n = 0, saltados = 0;
-  const orden = con.slice().sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
-  for (const g of orden) {
-    const nombre = nombrePDF(g, usados), marca = String(g.fotoV || 1);
-    if (g.pdfDrive === marca + '|' + nombre) { saltados++; continue; }
-    const src = await DB.get('foto:' + g.id); if (!src) continue;
-    aviso && aviso(`Subiendo soportes en PDF (${n + saltados + 1} de ${orden.length})…`);
-    const titulo = `${g.proveedor || g.razon || g.concepto || 'Gasto'} · ${fmtCOP(g.valor)}`;
-    const detalle = `Fecha ${fmtFecha(g.fecha)} · ${g.concepto || ''}${g.sub ? ' / ' + g.sub : ''}${g.factura ? ' · Factura N° ' + g.factura : ''}${g.nit ? ' · NIT ' + g.nit : ''} · Pagado por ${g.pagadoPor || ''}`;
-    await GW.subir(await pdfFactura(src, titulo, detalle), nombre, 'application/pdf', carpeta, carpetaId, sub);
-    g.pdfDrive = marca + '|' + nombre; n++;
+const pdfT = (f, tam, x, y, t, gris) => `${gris ? '0.4 g ' : '0 g '}BT /${f} ${tam} Tf ${x} ${y} Td (${pdfTexto(t)}) Tj ET\n`;
+const pdfDer = (f, tam, xDer, y, t) => pdfT(f, tam, xDer - String(t).length * tam * 0.5, y, t);
+const cortoPDF = (t, n) => { t = String(t || ''); return t.length > n ? t.slice(0, n - 3) + '...' : t; };
+async function pdfFacturas(vx, gastos, aviso) {
+  const lista = gastos.filter(g => g.foto).slice().sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
+  const total = lista.reduce((s, g) => s + (Number(g.valor) || 0), 0), m = 40, paginas = [];
+  const cab = `${vx.cliente || 'Viaje'}${vx.cot ? ' · COT ' + vx.cot : ''}${vx.servicio ? ' · ' + vx.servicio : ''}`;
+  const per = `${vx._corte ? nombreCorte(vx._corte) + ' · ' : ''}${fmtFecha(vx.inicio)} a ${fmtFecha(vx.fin)}${vx.trabajador ? ' · ' + vx.trabajador : ''}`;
+  // Índice
+  const porPag = 34;
+  for (let i = 0; i < Math.max(1, Math.ceil(lista.length / porPag)); i++) {
+    let c = pdfT('F1', 16, m, 740, 'Soportes de facturas') + pdfT('F2', 10, m, 722, cab) + pdfT('F2', 10, m, 708, per, true);
+    let y = 680; c += pdfT('F1', 9, m, y, 'Pág.') + pdfT('F1', 9, m + 34, y, 'Fecha') + pdfT('F1', 9, m + 92, y, 'Proveedor') + pdfT('F1', 9, m + 300, y, 'Factura') + pdfDer('F1', 9, 572, y, 'Valor');
+    c += `0.75 G 0.5 w ${m} ${y - 6} m 572 ${y - 6} l S\n`; y -= 20;
+    lista.slice(i * porPag, (i + 1) * porPag).forEach((g, j) => {
+      const n = i * porPag + j;
+      c += pdfT('F2', 9, m, y, String(n + 2 + Math.ceil(lista.length / porPag) - 1)) + pdfT('F2', 9, m + 34, y, fmtFecha(g.fecha)) + pdfT('F2', 9, m + 92, y, cortoPDF(g.proveedor || g.razon || g.concepto, 40)) + pdfT('F2', 9, m + 300, y, cortoPDF(g.factura || '-', 26)) + pdfDer('F2', 9, 572, y, fmtCOP(g.valor).replace(/\s/g, ' '));
+      y -= 17;
+    });
+    if (i === Math.ceil(lista.length / porPag) - 1 || !lista.length) { c += `0.75 G 0.5 w ${m} ${y + 8} m 572 ${y + 8} l S\n` + pdfT('F1', 10, m, y - 8, `${lista.length} factura${lista.length === 1 ? '' : 's'}`) + pdfDer('F1', 10, 572, y - 8, 'Total ' + fmtCOP(total).replace(/\s/g, ' ')); }
+    paginas.push({ cont: c });
   }
-  if (n) await guardar();
+  // Una página por factura
+  for (let i = 0; i < lista.length; i++) {
+    const g = lista[i]; aviso && aviso(`Armando el PDF de facturas (${i + 1} de ${lista.length})…`);
+    const src = await DB.get('foto:' + g.id); if (!src) continue;
+    const { bytes, im } = await fotoJPEG(src), top = 64, mm = 28;
+    const k = Math.min((612 - 2 * mm) / im.width, (792 - top - mm) / im.height), iw = im.width * k, ih = im.height * k, ix = (612 - iw) / 2, iy = 792 - top - ih;
+    const det = `Fecha ${fmtFecha(g.fecha)} · ${g.concepto || ''}${g.sub ? ' / ' + g.sub : ''}${g.factura ? ' · Factura N° ' + g.factura : ''}${g.nit ? ' · NIT ' + g.nit : ''} · Pagado por ${g.pagadoPor || ''}`;
+    const c = pdfT('F1', 12, mm, 762, `${i + 1}. ${g.proveedor || g.razon || g.concepto || 'Gasto'} · ${fmtCOP(g.valor)}`) + pdfT('F2', 9, mm, 747, cortoPDF(det, 120), true) + `q ${iw.toFixed(2)} 0 0 ${ih.toFixed(2)} ${ix.toFixed(2)} ${iy.toFixed(2)} cm /Im1 Do Q`;
+    paginas.push({ cont: c, img: { bytes, w: im.width, h: im.height } });
+  }
+  return { bytes: armarPDF(paginas), n: lista.length };
+}
+const nombreFacturasPDF = vx => (vx._corte ? nombreCorte(vx._corte) + ' - ' : vx._final ? 'Pendiente por cortar - ' : '') + nombreArchivoViaje(vx) + ' - Facturas.pdf';
+// Sube un solo PDF con todas las facturas (con foto) de lo que se envía. Si no hay fotos, no sube nada.
+async function subirFacturasPDF(vx, carpeta, carpetaId, sub, aviso) {
+  if (!vx.gastos.some(g => g.foto)) return 0;
+  const { bytes, n } = await pdfFacturas(vx, vx.gastos, aviso);
+  aviso && aviso('Subiendo el PDF de facturas…');
+  await GW.subir(bytes, nombreFacturasPDF(vx), 'application/pdf', carpeta, carpetaId, sub);
+  if (vx._corte) vx._corte.pdfFacturas = new Date().toISOString();
   return n;
 }
 
@@ -2171,7 +2201,7 @@ async function subirDrive(tipo, corteId) {
     const v = v0, c = driveCfg();
     const base = c.porViaje ? `COT ${v.cot || 'sin COT'} ${v.cliente || ''}`.replace(/[\\/:*?"<>|]+/g, ' ').trim() : '';
     const sub = tipo === 'backup' ? 'Copias de seguridad' : cortesDe(v0).length ? carpetaProyecto(v0) : base;
-    if (tipo !== 'backup') await subirSoportesPDF(vx.gastos, c.carpetaId ? c.carpetaNombre || 'Carpeta compartida' : c.carpeta || 'Viáticos Sistronic', c.carpetaId || '', sub, t => { driveUltimo = { estado: 'subiendo', txt: t }; render(); });
+    if (tipo !== 'backup') await subirFacturasPDF(vx, c.carpetaId ? c.carpetaNombre || 'Carpeta compartida' : c.carpeta || 'Viáticos Sistronic', c.carpetaId || '', sub, t => { driveUltimo = { estado: 'subiendo', txt: t }; render(); });
     driveUltimo = { estado: 'subiendo' }; render();
     const b64 = await blobB64(blob), mime = blob.type || 'application/octet-stream';
     if (c.carpetaId && Android.uploadDrive2) Android.uploadDrive2(b64, nombre, mime, c.carpetaNombre || 'Carpeta compartida', c.carpetaId, sub);
@@ -2232,7 +2262,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '38 (26/11/2026)';
+const APP_VERSION = '39 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
