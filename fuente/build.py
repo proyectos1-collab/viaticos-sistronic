@@ -2,7 +2,8 @@ import base64,sys
 d='/tmp/claude-0/viaticos/'
 css=open(d+'src/app.css').read(); js=open(d+'src/app.js').read(); body=open(d+'src/body.html').read()
 logo='data:image/png;base64,'+base64.b64encode(open(d+'icons/logo-full.png','rb').read()).decode()
-pre='<script>const LOGO="%s";</script>'%logo
+logob='data:image/png;base64,'+base64.b64encode(open(d+'icons/logo-blanco.png','rb').read()).decode()
+pre='<script>const LOGO="%s";const LOGO_BLANCO="%s";</script>'%(logo,logob)
 head='<title>Viáticos Sistronic</title>\n<meta name="claude:viewport-fit-sides" content="cover">\n<style>\n'+css+'\n</style>\n'
 inner=head+body+pre+'\n<script>\n'+js+'\n</script>\n'
 full='''<!doctype html>

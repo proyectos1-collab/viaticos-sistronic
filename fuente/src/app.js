@@ -1884,7 +1884,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '30 (26/11/2026)';
+const APP_VERSION = '31 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
@@ -1910,7 +1910,10 @@ function perfil() {
   let p = {}; try { p = Android.getProfile ? JSON.parse(Android.getProfile() || '{}') : {}; } catch {}
   p.email = p.email || Android.getEmail(); if (!p.email) return null;
   p.nombre = p.name || p.email.split('@')[0];
-  p.iniciales = (p.name ? p.name.split(/\s+/).filter(Boolean).slice(0, 2).map(x => x[0]) : [p.email[0]]).join('').toUpperCase();
+  // En las cuentas de Sistronic el nombre suele empezar por "Sistronic": se usa el nombre de la persona
+  const partes = (p.name || '').split(/\s+/).filter(w => w && !/^sistronic$/i.test(w));
+  p.corto = partes[0] || (p.given_name && !/^sistronic$/i.test(p.given_name) ? p.given_name : '') || p.email.split('@')[0];
+  p.iniciales = (partes.length ? partes.slice(0, 2).map(x => x[0]) : [p.corto[0]]).join('').toUpperCase();
   return p;
 }
 function avatarHTML(p, cls = '') {
@@ -1921,7 +1924,7 @@ function avatarHTML(p, cls = '') {
 function pintarAvatar() {
   const b = $('#avatar-btn'); if (!b) return;
   const p = perfil();
-  b.innerHTML = avatarHTML(p) + (p ? `<span class="who"><b>${esc((p.given_name || p.nombre).split(' ')[0])}</b></span>` : '');
+  b.innerHTML = avatarHTML(p) + `<span class="who"><b>${esc(p ? p.corto : 'Ajustes')}</b></span>`;
   b.title = p ? `${p.nombre} · ${p.email}` : 'Configuración';
 }
 window.onProfile = () => { pintarAvatar(); if (tab === 'config') render(); };
@@ -2032,7 +2035,7 @@ function pintarLogin() {
     <p class="hint">Sus gastos se guardan en este equipo y en una carpeta privada de la app en su Google Drive, para verlos desde cualquier equipo con la misma cuenta.</p>
   </div>`;
 }
-window.onLoginOk = email => { programarSync(300); loginEstado = { cargando: false, msg: '', config: false }; const p = perfil(); toast('Bienvenido, ' + (p && p.name ? p.name.split(' ')[0] : email)); pintarLogin(); render(); };
+window.onLoginOk = email => { programarSync(300); loginEstado = { cargando: false, msg: '', config: false }; const p = perfil(); toast('Bienvenido, ' + (p ? p.corto : email)); pintarLogin(); render(); };
 window.onLoginError = (msg, config) => { loginEstado = { cargando: false, msg, config: config === 'config' }; pintarLogin(); };
 window.onLogout = () => { pintarLogin(); render(); };
 
@@ -2347,6 +2350,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#sheet'
   try { const p = perfil(); if (p && !p.name && Android.refreshProfile) Android.refreshProfile(); } catch {}
   setTimeout(() => { const sp = $('#splash'); if (sp) { sp.classList.add('out'); setTimeout(() => sp.remove(), 400); } }, Math.max(0, 700 - (Date.now() - t0)));
   $('#trip-btn').addEventListener('click', abrirViajes);
+  { const ti = $('#trip-ic'); if (ti) ti.innerHTML = ICON.viaje; }
   $('#fab').addEventListener('click', () => abrirGasto());
   $('#fab').innerHTML = ICON.plus + '<span>Registrar gasto</span>';
   try { if (location.hash && TABS.some(t => t[0] === location.hash.slice(1))) tab = location.hash.slice(1); } catch {}
