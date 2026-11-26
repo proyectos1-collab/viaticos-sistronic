@@ -978,7 +978,7 @@ function avisoDupVivo() {
   const box = $('#g-dup'); if (!box || !editando || box.querySelector('[data-act=g-dup-ok]')) return;
   try { leerFormGasto(); } catch {}
   const d = facturaRepetida(editando);
-  box.innerHTML = d ? `<div class="note dup">⚠ <b>Posible factura repetida.</b> ${textoDup(d)}</div>` : '';
+  box.innerHTML = d ? `<div class="note dup">${d.por === 'valor' ? '⚠ <b>Posible gasto repetido.</b>' : '⛔ <b>Factura repetida: no se podrá guardar.</b>'} ${textoDup(d)}</div>` : '';
 }
 let dupOtro = false;
 async function guardarGasto(otro, forzar) {
@@ -993,8 +993,12 @@ async function guardarGasto(otro, forzar) {
     if (d) {
       dupOtro = !!otro;
       const box = $('#g-dup');
-      box.innerHTML = `<div class="note dup">⚠ <b>Factura repetida.</b> ${textoDup(d)} ¿Desea guardarla de todas formas?</div>
-        <div class="row" style="margin-top:8px"><button type="button" class="btn danger" data-act="g-dup-ok">Sí, guardar igual</button><button type="button" class="btn" data-act="g-dup-no">Revisar</button></div>`;
+      if (d.por !== 'valor') {
+        box.innerHTML = `<div class="note dup">⛔ <b>No se puede guardar: factura repetida.</b> ${textoDup(d)} Revise el número${d.por === 'cufe' ? ' o el CUFE' : ' y el NIT'}, o edite la factura original.</div>`;
+        box.scrollIntoView({ block: 'center', behavior: 'smooth' }); toast('Factura repetida: no se guardó'); return;
+      }
+      box.innerHTML = `<div class="note dup">⚠ <b>Posible gasto repetido.</b> ${textoDup(d)} Si son dos compras distintas (por ejemplo, dos taxis iguales), puede guardarlo.</div>
+        <div class="row" style="margin-top:8px"><button type="button" class="btn danger" data-act="g-dup-ok">Sí, es otro gasto</button><button type="button" class="btn" data-act="g-dup-no">Revisar</button></div>`;
       box.scrollIntoView({ block: 'center', behavior: 'smooth' });
       return;
     }
@@ -1911,7 +1915,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '33 (26/11/2026)';
+const APP_VERSION = '34 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
@@ -2332,7 +2336,7 @@ document.addEventListener('click', async e => {
     case 'foto-del': fotoTmp = null; leerFormGasto(); editando.foto = false; pintarGasto(); break;
     case 'g-del': $('#g-del').innerHTML = '<div class="note">¿Eliminar este gasto? No se puede deshacer.</div><div class="row" style="margin-top:8px"><button type="button" class="btn danger" data-act="g-del-ok">Sí, eliminar</button><button type="button" class="btn" data-act="g-del-no">Cancelar</button></div>'; break;
     case 'g-del-no': pintarGasto(); break;
-    case 'g-dup-ok': guardarGasto(dupOtro, true); break;
+    case 'g-dup-ok': { leerFormGasto(); const d = facturaRepetida(editando); if (d && d.por !== 'valor') { guardarGasto(dupOtro); break; } guardarGasto(dupOtro, true); break; }
     case 'rev-aprobado': marcarRevision(viaje(), 'aprobado'); await guardar(); render(); toast('Viaje marcado como aprobado'); break;
     case 'rev-devuelto': revDevolviendo = true; render(); setTimeout(() => $('#rev-nota')?.focus(), 50); break;
     case 'rev-cancelar': revDevolviendo = false; render(); break;
