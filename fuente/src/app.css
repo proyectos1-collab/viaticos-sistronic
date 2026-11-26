@@ -142,7 +142,7 @@ tr:last-child td { border-bottom: 0; }
 .sheet-head { position: sticky; top: 0; background: var(--bg); padding: 14px 0 10px; display: flex; justify-content: space-between; align-items: center; gap: 8px; z-index: 2; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
 .sheet-head h3 { margin: 0; font-size: 17px; }
 .x { background: none; border: 0; font-size: 26px; line-height: 1; cursor: pointer; padding: 4px 8px; color: var(--muted); }
-.photo-prev { max-height: 220px; border-radius: 10px; border: 1px solid var(--line); display: block; }
+.photo-prev { max-height: 260px; max-width: 100%; object-fit: contain; background: #fff; border-radius: 10px; border: 1px solid var(--line); display: block; }
 
 .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(140px + env(safe-area-inset-bottom, 0px)); background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 10px; z-index: 60; font-weight: 600; max-width: 90%; }
 .note { background: var(--amber-bg); color: var(--amber); border-radius: 10px; padding: 10px 12px; font-size: 13px; font-weight: 600; }

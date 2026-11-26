@@ -753,11 +753,12 @@ async function guardarIA() { await DB.set('ia', IA); try { if (S) { await sellar
 const iaLista = () => !!(IA.key && IA.key.trim());
 let iaLeyendo = false;
 
-async function leerFacturaIA(dataUrl) {
+async function leerFacturaIA(dataUrl, textoPDF) {
   const conceptos = Object.keys(S.listas);
   const subs = conceptos.map(c => `${c}: ${S.listas[c].join(', ')}`).join('\n');
   const prompt = `Eres un asistente contable en Colombia. Lee la factura, recibo o comprobante de la imagen y devuelve SOLO un JSON con:
 - proveedor: nombre comercial del establecimiento o empresa que emite el documento (ej. "Rappi", "Hotel Casa Rueda", "Uber").
+  Si el nombre NO está escrito como texto y solo aparece en el LOGO (imagen, marca o dibujo), identifique la empresa por su logo (ej. el logo de Rappi, Crepes & Waffles, Éxito, D1, Terpel, Uber, Avianca). Si hay NIT, el proveedor debe corresponder a ese NIT.
 - nit: NIT o documento del proveedor si aparece, si no "".
 - fecha: fecha del documento en formato AAAA-MM-DD, si no aparece "".
 - factura: número de factura, recibo, comprobante o ticket (incluya prefijo si lo hay), si no "".
@@ -804,7 +805,7 @@ Si un dato no se puede leer, deje "" (o 0 en valor). No invente datos.`;
   let r;
   try {
     r = await iaFetch({
-      contents: [{ role: 'user', parts: [{ inline_data: { mime_type: mime, data: b64 } }, { text: prompt }] }],
+      contents: [{ role: 'user', parts: [{ inline_data: { mime_type: mime, data: b64 } }, { text: prompt + (textoPDF ? '\n\nLa factura vino en PDF. Este es el texto que trae el PDF; úselo para leer números, NIT, CUFE y valores exactos (el nombre del proveedor puede estar solo en el logo de la imagen):\n' + textoPDF.slice(0, 8000) : '') }] }],
       generationConfig: { temperature: 0, responseMimeType: 'application/json', responseSchema: schema }
     }, { intentos: 2, porLlamada: 35000, total: 100000 });
   } catch (e) { throw new Error(iaErrorExc(e)); }
@@ -847,7 +848,7 @@ async function aplicarIA(dataUrl) {
   iaLeyendo = true; const id = editando.id; delete editando._iaErr;
   leerFormGasto(); pintarGasto();
   try {
-    const d = await leerFacturaIA(dataUrl);
+    const d = await leerFacturaIA(dataUrl, pdfTextoTmp && pdfTextoTmp.id === id && dataUrl === fotoTmp ? pdfTextoTmp.t : '');
     if (!editando || editando.id !== id) return;
     leerFormGasto();
     const g = editando, llenos = [];
@@ -863,6 +864,11 @@ async function aplicarIA(dataUrl) {
     }
     let nfx = 0; for (const [k] of FX_CAMPOS) { const val = d.fx[k]; if (val !== '' && val != null && (g[k] === '' || g[k] == null)) { g[k] = val; nfx++; } }
     if (nfx) llenos.push('impuestos y datos de la factura');
+    if (!g.proveedor && g.nit) {
+      const p = Object.values(S.proveedores || {}).find(p => soloDig(p.nit) === soloDig(g.nit) && (p.comercial || p.razon));
+      if (p) { g.proveedor = p.comercial || p.razon; llenos.push('proveedor (por el NIT)'); }
+      else { try { const r = await consultarRUES(soloDig(g.nit)); if (r && r.razon && editando === g) { g.proveedor = r.razon; if (!g.razon) g.razon = r.razon; llenos.push('proveedor (por el NIT, en el RUES)'); } } catch {} }
+    }
     g._ia = llenos; delete g._iaErr;
     toast(llenos.length ? 'Datos leídos con IA. Revíselos antes de guardar.' : 'La IA no encontró datos nuevos');
   } catch (e) {
@@ -932,8 +938,8 @@ function pintarGasto(anim) {
     <div class="form">
       <div class="field"><span>Foto de la factura${iaLista() ? ' · se llena sola con IA' : ' (opcional)'}</span>
         <input id="g-file" type="file" accept="image/*" capture="environment" hidden>
-        <input id="g-galeria" type="file" accept="image/*" hidden>
-        <div class="row"><button type="button" class="btn ${g._nuevo && !g.foto ? 'primary' : ''}" data-act="foto" ${iaLeyendo ? 'disabled' : ''}>📷 ${g.foto ? 'Tomar otra' : 'Tomar foto'}</button><button type="button" class="btn" data-act="galeria" ${iaLeyendo ? 'disabled' : ''}>🖼️ ${g.foto ? 'Otra de la galería' : 'Subir de la galería'}</button></div>
+        <input id="g-galeria" type="file" accept="image/*,application/pdf,.pdf" hidden>
+        <div class="row"><button type="button" class="btn ${g._nuevo && !g.foto ? 'primary' : ''}" data-act="foto" ${iaLeyendo ? 'disabled' : ''}>📷 ${g.foto ? 'Tomar otra' : 'Tomar foto'}</button><button type="button" class="btn" data-act="galeria" ${iaLeyendo ? 'disabled' : ''}>🖼️ ${g.foto ? 'Otra imagen o PDF' : 'Galería o PDF'}</button></div>
         <div class="row">${g.foto && iaLista() ? `<button type="button" class="btn" data-act="ia-leer" ${iaLeyendo ? 'disabled' : ''}>✨ Leer con IA</button>` : ''}${g.foto ? '<button type="button" class="btn" data-act="foto-del">Quitar foto</button>' : ''}</div>
         ${iaLeyendo ? '<div class="note ia-busy"><span class="spin"></span> <span class="txt">Leyendo la factura con IA…</span></div>' : ''}
         ${g._iaErr && !iaLeyendo ? `<div class="note">⚠ ${esc(g._iaErr)}</div>` : ''}
@@ -1140,6 +1146,35 @@ async function guardarGasto(otro, forzar) {
   render();
 }
 function cerrarSheet() { $('#sheet').innerHTML = ''; editando = null; fotoTmp = undefined; }
+
+/* ---------- Facturas en PDF: se convierten a imagen (y se saca su texto para la IA) ---------- */
+let pdfTextoTmp = null;
+// Quita el margen blanco de una página (deja un borde pequeño). Devuelve null si la página está vacía.
+function recortarBlanco(c) {
+  const W = c.width, H = c.height, d = c.getContext('2d').getImageData(0, 0, W, H).data; let x0 = W, y0 = H, x1 = -1, y1 = -1;
+  for (let y = 0; y < H; y += 2) for (let x = 0; x < W; x += 2) { const i = (y * W + x) * 4; if (d[i] < 235 || d[i + 1] < 235 || d[i + 2] < 235) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; } }
+  if (x1 < 0) return null;
+  const m = Math.round(W * 0.03); x0 = Math.max(0, x0 - m); y0 = Math.max(0, y0 - m); x1 = Math.min(W, x1 + m); y1 = Math.min(H, y1 + m);
+  const o = lienzo(x1 - x0, y1 - y0); o.getContext('2d').drawImage(c, x0, y0, x1 - x0, y1 - y0, 0, 0, x1 - x0, y1 - y0); return o;
+}
+async function pdfAImagen(file) {
+  const pdfjs = await import(new URL('vendor/pdf.min.mjs', location.href).href);
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL('vendor/pdf.worker.min.mjs', location.href).href;
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  const n = Math.min(doc.numPages, 4), lienzos = []; let texto = '';
+  for (let i = 1; i <= n; i++) {
+    const pg = await doc.getPage(i), v1 = pg.getViewport({ scale: 1 }), k = Math.min(3, 1400 / v1.width), vp = pg.getViewport({ scale: k });
+    const c = lienzo(Math.round(vp.width), Math.round(vp.height)), x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);
+    await pg.render({ canvasContext: x, viewport: vp }).promise; const rec = recortarBlanco(c); if (rec) lienzos.push(rec);
+    try { const tc = await pg.getTextContent(); texto += tc.items.map(t => t.str + (t.hasEOL ? '\n' : ' ')).join('') + '\n'; } catch {}
+  }
+  // Une las páginas una debajo de otra (máx. 4), sin pasar de un alto razonable
+  if (!lienzos.length) throw new Error('El PDF está en blanco');
+  const W = Math.max(...lienzos.map(c => c.width)), Htot = lienzos.reduce((s, c) => s + c.height, 0), k = Math.min(1, 5000 / Htot);
+  const out = lienzo(Math.round(W * k), Math.round(Htot * k)), ox = out.getContext('2d'); ox.fillStyle = '#fff'; ox.fillRect(0, 0, out.width, out.height);
+  let y = 0; for (const c of lienzos) { ox.drawImage(c, 0, y, c.width * k, c.height * k); y += c.height * k; if (y < out.height) { ox.fillStyle = '#ccc'; ox.fillRect(0, y - 1, out.width, 2); } }
+  return { src: out.toDataURL('image/jpeg', 0.85), texto: texto.replace(/[ \t]+/g, ' ').trim(), paginas: doc.numPages };
+}
 
 /* ---------- Soportes en PDF (una factura por archivo) ---------- */
 function pdfTexto(t) { let o = ''; const W = { '\u2026': 133, '\u2014': 151, '\u2013': 150, '\u201c': 147, '\u201d': 148, '\u2018': 145, '\u2019': 146, '\u20ac': 128 }; for (let ch of String(t)) { if (W[ch]) ch = String.fromCharCode(W[ch]); const c = ch.charCodeAt(0); o += c > 255 ? '?' : (ch === '(' || ch === ')' || ch === '\\') ? '\\' + ch : c > 126 || c < 32 ? '\\' + c.toString(8).padStart(3, '0') : ch; } return o; }
@@ -2268,7 +2303,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '41 (26/11/2026)';
+const APP_VERSION = '42 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
@@ -2818,7 +2853,14 @@ document.addEventListener('change', async e => {
   if (el.dataset.vf && tab === 'legal') { const { L, html } = foHTML(vistaAbierta(viaje())); $('.fo-wrap').innerHTML = html; const n = $('#main .note'); if (n) { n.textContent = L.aviso; n.classList.toggle('ok', L.ok); } }
   else if (el.dataset.vf && el.type === 'date') { const y = window.scrollY; render(); window.scrollTo(0, y); }
   if ((el.id === 'g-file' || el.id === 'g-galeria') && el.files[0]) {
-    try { leerFormGasto(); const f = el.files[0]; el.value = ''; const r = await abrirEscaner(f); if (!r || !editando) return; fotoTmp = r; editando.foto = true; pintarGasto(); if (iaLista() && IA.auto) aplicarIA(fotoTmp); }
+    try { leerFormGasto(); const f = el.files[0]; el.value = ''; pdfTextoTmp = null;
+      if (f.type === 'application/pdf' || /\.pdf$/i.test(f.name)) {
+        toast('Abriendo el PDF…'); const p = await pdfAImagen(f); if (!editando) return;
+        fotoTmp = p.src; pdfTextoTmp = { id: editando.id, t: p.texto }; editando.foto = true; pintarGasto();
+        if (p.paginas > 4) toast(`El PDF tiene ${p.paginas} páginas: se guardaron las primeras 4`);
+        if (iaLista() && IA.auto) aplicarIA(fotoTmp); return;
+      }
+      const r = await abrirEscaner(f); if (!r || !editando) return; fotoTmp = r; editando.foto = true; pintarGasto(); if (iaLista() && IA.auto) aplicarIA(fotoTmp); }
     catch { toast('No se pudo leer la imagen'); }
   }
   if (el.id === 'g-sub' && editando) editando.sub = el.value;
