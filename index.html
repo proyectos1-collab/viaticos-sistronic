@@ -384,6 +384,7 @@ input[readonly] { background: var(--surface-2); color: var(--muted); }
 .aprob-row span { overflow-wrap: anywhere; min-width: 0; }
 .aprob-row small { color: var(--muted); flex: 0 0 auto; }
 .aprob-row .btn { flex: 0 0 auto; padding: 6px 10px; }
+.sign small.fo-aprob { display: block; font-size: 10px; font-weight: 400; color: #444; margin-top: 2px; }
 
 :root{padding-top:env(safe-area-inset-top,0px)}
 [hidden]{display:none!important}
@@ -796,7 +797,7 @@ function foHTML(v) {
       ${filas.join('')}
       <tr class="total"><td colspan="7" style="text-align:right;font-weight:700">TOTAL VIÁTICOS</td><td class="r"><b>${fmtCOP(L.total)}</b></td></tr>
     </table>
-    <table class="sign" style="margin-top:14px"><tr><td>${S.firma ? `<img class="fo-firma" src="${S.firma}" alt="Firma">` : ''}Solicitado por</td><td>Revisado</td><td>Aprobado</td></tr></table>
+    <table class="sign" style="margin-top:14px"><tr><td>${S.firma ? `<img class="fo-firma" src="${S.firma}" alt="Firma">` : ''}Solicitado por</td><td>Revisado</td><td>${(() => { const r = v.revision; return r && r.estado === 'aprobado' && r.firmaAprob ? `<img class="fo-firma" src="${esc(r.firmaAprob)}" alt="Firma">` : ''; })()}Aprobado${(() => { const r = v.revision; return r && r.estado === 'aprobado' && r.aprobNombre ? `<small class="fo-aprob">${esc(r.aprobNombre)} · ${fmtFH(r.fecha).slice(0, 10)}</small>` : ''; })()}</td></tr></table>
   </div>` };
 }
 /* ---------- Cortes: legalización parcial por cierre de mes ---------- */
@@ -2249,6 +2250,7 @@ async function exportarExcel(soloGenerar, vx) {
   if (SOLO_VALORES) { L.lineas.forEach((l, i) => h4.set('K' + (22 + i), l.d)); if (!L.lineas.length) h4.set('K22', ''); h4.aplanar(); }
   zip.file(p4, h4.xml());
   await firmaEnExcel(zip);
+  { const r = v.revision; if (r && r.estado === 'aprobado' && r.firmaAprob) await firmaAprobadoEnExcel(zip, r.firmaAprob, `Aprobó: ${r.aprobNombre || r.por || ''} · ${fmtFH(r.fecha).slice(0, 10)}`); }
 
   // Hoja Listas (sheet5.xml): subconceptos A–D, filas 2 a 40
   const p5 = 'xl/worksheets/sheet5.xml', h5 = hojaXML(await zip.file(p5).async('string'));
@@ -3041,9 +3043,17 @@ async function revisarFichas(forzar) {
   try {
     const q = "appProperties has { key='viaticosFicha' and value='1' } and 'me' in owners and trashed = false";
     const fs = (await GW.api('GET', `${DRIVE}?pageSize=200&fields=files(id,appProperties)&q=${encodeURIComponent(q)}`)).files || [];
-    let cambios = [];
+    let cambios = [], firmas = 0;
     for (const f of fs) {
       const p = f.appProperties || {}; if (!/^(aprobado|devuelto)$/.test(p.estado) || !p.decididoEn) continue;
+      if (p.estado === 'aprobado' && p.firmaFicha === '1') { // firma de quien aprobó (para la vista y el Excel)
+        const v = S.viajes.find(x => x.id === p.viajeId), k = v && p.corteId ? cortesDe(v).find(x => x.id === p.corteId) : null;
+        const objs = v ? [p.clase === 'final' || !k ? v : null, k].filter(Boolean) : [];
+        if (objs.some(o => !o.revision || o.revision.estado !== 'aprobado' || !o.revision.firmaAprob || o.revision.fecha !== p.decididoEn)) {
+          try { const d = await GW.api('GET', `${DRIVE}/${f.id}?alt=media`), a = d.aprobacion || {};
+            if (a.firma && /^data:image\/png;base64,/.test(a.firma)) f._aprob = a; } catch {}
+        }
+      }
       const v = S.viajes.find(x => x.id === p.viajeId); if (!v) continue;
       const k = p.corteId ? cortesDe(v).find(x => x.id === p.corteId) : null;
       const quien = (p.decididoPor || '').split('@')[0];
@@ -3051,9 +3061,10 @@ async function revisarFichas(forzar) {
       let hubo = false;
       if (p.clase === 'final' || !k) hubo = aplicar(v, () => { marcarRevision(v, p.estado, p.nota || ''); v.revision.fecha = p.decididoEn; v.revision.por = p.decididoPor || ''; }) || hubo;
       if (k) hubo = aplicar(k, () => { k.revision = { estado: p.estado, nota: p.nota || '', fecha: p.decididoEn, por: p.decididoPor || '' }; }) || hubo;
+      if (f._aprob) for (const o of [p.clase === 'final' || !k ? v : null, k].filter(Boolean)) if (o.revision && o.revision.estado === 'aprobado' && (o.revision.firmaAprob !== f._aprob.firma || o.revision.fecha !== p.decididoEn)) { o.revision.firmaAprob = f._aprob.firma; o.revision.aprobNombre = f._aprob.nombre || ''; o.revision.fecha = p.decididoEn; o.revision.por = p.decididoPor || o.revision.por || ''; firmas++; }
       if (hubo) cambios.push(`${p.estado === 'aprobado' ? '✔ Aprobada' : '↩ Devuelta'}: ${k && p.clase !== 'final' ? nombreCorte(k) + ' de ' : ''}${tituloViaje(v).replace('🧰 ', '')}${quien ? ' (' + quien + ')' : ''}`);
     }
-    if (cambios.length) { await guardar(); render(); toast(cambios.join(' · ')); }
+    if (cambios.length || firmas) { await guardar(); render(); if (cambios.length) toast(cambios.join(' · ')); }
   } catch {}
 }
 
@@ -3121,7 +3132,7 @@ function vFichaDetalle(f) {
   if (p.estado === 'aprobado') h += `<div class="hint">${p.firmado === 'si' ? '✍️ El Excel quedó firmado en el recuadro APROBADO.' : p.firmado === 'parcial' ? '⚠ Solo se pudo firmar parte de los Excel.' : '⚠ El Excel no se pudo firmar (se envió antes de la versión 52 o no hay permiso de edición).'}</div>`;
   if (ADM.pideFirma && !S.firma && p.estado !== 'aprobado') h += `<div class="card form" id="adm-firma"><b>Para aprobar necesita su firma</b><p class="hint" style="margin:0">Se pondrá en el recuadro <b>APROBADO</b> del formato. Se guarda una sola vez.</p>${vFirmaCfg().replace(/<p class="hint"[^>]*>Se pone en[\s\S]*?<\/p>/, '')}</div>`;
   if (ADM.devolviendo) h += `<div class="card form adm-dec"><label class="field"><span>Motivo de la devolución</span><textarea id="adm-nota" rows="3" placeholder="Ej.: falta la factura del hotel del 12/11"></textarea></label><div class="row"><button class="btn danger" data-act="adm-devolver-ok" ${ADM.decidiendo ? 'disabled' : ''}>↩ Devolver al trabajador</button><button class="btn" data-act="adm-cancelar">Cancelar</button></div></div>`;
-  else h += `<div class="row adm-dec">${p.estado !== 'aprobado' ? `<button class="btn primary" data-act="adm-aprobar" ${ADM.decidiendo ? 'disabled' : ''}>✔ Aprobar</button>` : ''}${p.estado !== 'devuelto' ? `<button class="btn" data-act="adm-devolver" ${ADM.decidiendo ? 'disabled' : ''}>↩ Devolver</button>` : ''}</div>`;
+  else h += `<div class="row adm-dec">${p.estado !== 'aprobado' ? `<button class="btn primary" data-act="adm-aprobar" ${ADM.decidiendo ? 'disabled' : ''}>✔ Aprobar</button>` : p.firmaFicha !== '1' ? `<button class="btn primary" data-act="adm-aprobar" ${ADM.decidiendo ? 'disabled' : ''}>✍️ Firmar la aprobación</button>` : ''}${p.estado !== 'devuelto' ? `<button class="btn" data-act="adm-devolver" ${ADM.decidiendo ? 'disabled' : ''}>↩ Devolver</button>` : ''}</div>`;
   if (ADM.decidiendo) h += `<div class="note ia-busy"><span class="spin"></span> <span class="txt">Guardando la decisión…</span></div>`;
   return h;
 }
@@ -3152,6 +3163,11 @@ async function admDecidir(estado, nota) {
       let ok = 0; for (const a of xs) { try { await firmarExcelAprobado(a.id, texto); ok++; } catch (e) { console.warn('firma', e); } }
       props.firmado = xs.length ? (ok === xs.length ? 'si' : ok ? 'parcial' : 'no') : 'no';
     }
+    if (estado === 'aprobado') { // la firma viaja en la ficha para que la app del trabajador la muestre
+      const pf = perfil(); f.d.aprobacion = { por: correoActual(), nombre: (pf && pf.nombre) || correoActual(), fecha: props.decididoEn, firma: S.firma || '' };
+      await GW.api('PATCH', `https://www.googleapis.com/upload/drive/v3/files/${f.id}?uploadType=media&fields=id`, new Blob([JSON.stringify(f.d)], { type: 'application/json' }), 'application/json');
+      props.firmaFicha = '1';
+    }
     await GW.api('PATCH', `${DRIVE}/${f.id}?fields=id`, JSON.stringify({ appProperties: props }), 'application/json; charset=UTF-8');
     Object.assign(f.p, props); ADM.devolviendo = false; ADM.decidiendo = false;
     toast(estado === 'aprobado' ? 'Legalización aprobada' : 'Legalización devuelta al trabajador');
@@ -3175,7 +3191,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '52 (26/11/2026)';
+const APP_VERSION = '53 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">

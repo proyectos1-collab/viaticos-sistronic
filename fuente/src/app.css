@@ -373,3 +373,4 @@ input[readonly] { background: var(--surface-2); color: var(--muted); }
 .aprob-row span { overflow-wrap: anywhere; min-width: 0; }
 .aprob-row small { color: var(--muted); flex: 0 0 auto; }
 .aprob-row .btn { flex: 0 0 auto; padding: 6px 10px; }
+.sign small.fo-aprob { display: block; font-size: 10px; font-weight: 400; color: #444; margin-top: 2px; }
