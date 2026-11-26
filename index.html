@@ -1101,6 +1101,7 @@ async function leerFacturaIA(dataUrl, textoPDF) {
   const subs = conceptos.map(c => `${c}: ${S.listas[c].join(', ')}`).join('\n');
   const prompt = `Eres un asistente contable en Colombia. Lee la factura, recibo o comprobante de la imagen y devuelve SOLO un JSON con:
 - proveedor: nombre comercial del establecimiento o empresa que emite el documento (ej. "Rappi", "Hotel Casa Rueda", "Uber").
+  El proveedor es SIEMPRE quien VENDE y emite la factura, NUNCA el cliente/comprador. El comprador casi siempre es la empresa del trabajador: SISTRONIC (razón social SISTEMAS ELECTRONICOS S.A.S.)${soloDig((S.empresa || {}).nit) ? ', NIT ' + soloDig((S.empresa || {}).nit) : ''}; si ve ese nombre o ese NIT, es el CLIENTE, no el proveedor. En facturas electrónicas el emisor está en el encabezado (logo, su NIT, resolución DIAN, "Responsable de IVA") y el cliente aparece como "Cliente", "Señor(es)", "Adquiriente", "Facturar a" o "Comprador".
   Si el nombre NO está escrito como texto y solo aparece en el LOGO (imagen, marca o dibujo), identifique la empresa por su logo (ej. el logo de Rappi, Crepes & Waffles, Éxito, D1, Terpel, Uber, Avianca). Si hay NIT, el proveedor debe corresponder a ese NIT.
 - nit: NIT o documento del proveedor si aparece, si no "".
 - fecha: fecha del documento en formato AAAA-MM-DD, si no aparece "".
@@ -1181,6 +1182,13 @@ function normalizarIA(d) {
   out.fx = { tipoDoc: una(d.tipo_documento_factura, TIPOS_DOC), hora: hm ? pad(hm[1]) + ':' + hm[2] : '', cufe: s(d.cufe).replace(/\s+/g, ''), compradorNombre: s(d.comprador_nombre), compradorNit: soloDig(d.comprador_nit),
     subtotal: num(d.subtotal), ivaPct: pct(d.iva_porcentaje), iva: num(d.iva_valor), incPct: pct(d.inc_porcentaje), inc: num(d.inc_valor), propina: num(d.propina), descuento: num(d.descuento),
     formaPago: una(d.forma_pago, FORMAS_PAGO), medioPago: una(d.medio_pago, MEDIOS_PAGO) };
+  // Si la IA confundió al comprador (Sistronic) con el proveedor, se descarta ese dato
+  const emp = soloDig((S.empresa || {}).nit), cNom = normFact(d.comprador_nombre), cNit = soloDig(d.comprador_nit);
+  const nomComprador = x => { const n = normFact(x); return !!n && (/sistronic|sistemaselectronicos/.test(n) || (cNom.length > 3 && n === cNom)); };
+  const nitComprador = x => { const n = soloDig(x); return !!n && ((emp && n.slice(0, emp.length) === emp) || (cNit.length > 5 && n.slice(0, 9) === cNit.slice(0, 9))); };
+  if (nomComprador(out.proveedor)) out.proveedor = '';
+  if (out.tercero && (nitComprador(out.tercero.nit) || nomComprador(out.tercero.razon))) out.tercero = null;
+  if (nitComprador(out.nit)) out.nit = '';
   if (out.fx.iva === '' && out.fx.subtotal !== '') out.fx.iva = 0;
   if (out.fx.inc === '' && out.fx.subtotal !== '') out.fx.inc = 0;
   return out;
@@ -2646,7 +2654,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '42 (26/11/2026)';
+const APP_VERSION = '43 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
