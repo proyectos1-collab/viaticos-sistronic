@@ -1176,6 +1176,12 @@ function armarPDF(paginas) {
 }
 const pdfT = (f, tam, x, y, t, gris) => `${gris ? '0.4 g ' : '0 g '}BT /${f} ${tam} Tf ${x} ${y} Td (${pdfTexto(t)}) Tj ET\n`;
 const pdfDer = (f, tam, xDer, y, t) => pdfT(f, tam, xDer - String(t).length * tam * 0.5, y, t);
+// NIT del proveedor con su dígito de verificación (del gasto o, si falta, de la lista de proveedores)
+function nitTexto(g) {
+  let nit = soloDig(g.nit);
+  if (!nit) { const A = nombresDe(g); for (const p of Object.values(S.proveedores || {})) { const B = nombresDe({ proveedor: p.comercial, razon: p.razon }); if (p.nit && A.length && B.length && A.some(x => B.includes(x))) { nit = soloDig(p.nit); break; } } }
+  return nit ? nit + '-' + dvNIT(nit) : '';
+}
 const cortoPDF = (t, n) => { t = String(t || ''); return t.length > n ? t.slice(0, n - 3) + '...' : t; };
 async function pdfFacturas(vx, gastos, aviso) {
   const lista = gastos.filter(g => g.foto).slice().sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
@@ -1186,11 +1192,11 @@ async function pdfFacturas(vx, gastos, aviso) {
   const porPag = 34;
   for (let i = 0; i < Math.max(1, Math.ceil(lista.length / porPag)); i++) {
     let c = pdfT('F1', 16, m, 740, 'Soportes de facturas') + pdfT('F2', 10, m, 722, cab) + pdfT('F2', 10, m, 708, per, true);
-    let y = 680; c += pdfT('F1', 9, m, y, 'Pág.') + pdfT('F1', 9, m + 34, y, 'Fecha') + pdfT('F1', 9, m + 92, y, 'Proveedor') + pdfT('F1', 9, m + 300, y, 'Factura') + pdfDer('F1', 9, 572, y, 'Valor');
+    let y = 680; c += pdfT('F1', 9, m, y, 'Pág.') + pdfT('F1', 9, m + 30, y, 'Fecha') + pdfT('F1', 9, m + 84, y, 'Proveedor') + pdfT('F1', 9, m + 248, y, 'NIT') + pdfT('F1', 9, m + 330, y, 'Factura') + pdfDer('F1', 9, 572, y, 'Valor');
     c += `0.75 G 0.5 w ${m} ${y - 6} m 572 ${y - 6} l S\n`; y -= 20;
     lista.slice(i * porPag, (i + 1) * porPag).forEach((g, j) => {
       const n = i * porPag + j;
-      c += pdfT('F2', 9, m, y, String(n + 2 + Math.ceil(lista.length / porPag) - 1)) + pdfT('F2', 9, m + 34, y, fmtFecha(g.fecha)) + pdfT('F2', 9, m + 92, y, cortoPDF(g.proveedor || g.razon || g.concepto, 40)) + pdfT('F2', 9, m + 300, y, cortoPDF(g.factura || '-', 26)) + pdfDer('F2', 9, 572, y, fmtCOP(g.valor).replace(/\s/g, ' '));
+      c += pdfT('F2', 9, m, y, String(n + 2 + Math.ceil(lista.length / porPag) - 1)) + pdfT('F2', 9, m + 30, y, fmtFecha(g.fecha)) + pdfT('F2', 9, m + 84, y, cortoPDF(g.proveedor || g.razon || g.concepto, 30)) + pdfT('F2', 9, m + 248, y, nitTexto(g) || '-') + pdfT('F2', 9, m + 330, y, cortoPDF(g.factura || '-', 22)) + pdfDer('F2', 9, 572, y, fmtCOP(g.valor).replace(/\s/g, ' '));
       y -= 17;
     });
     if (i === Math.ceil(lista.length / porPag) - 1 || !lista.length) { c += `0.75 G 0.5 w ${m} ${y + 8} m 572 ${y + 8} l S\n` + pdfT('F1', 10, m, y - 8, `${lista.length} factura${lista.length === 1 ? '' : 's'}`) + pdfDer('F1', 10, 572, y - 8, 'Total ' + fmtCOP(total).replace(/\s/g, ' ')); }
@@ -1202,7 +1208,7 @@ async function pdfFacturas(vx, gastos, aviso) {
     const src = await DB.get('foto:' + g.id); if (!src) continue;
     const { bytes, im } = await fotoJPEG(src), top = 64, mm = 28;
     const k = Math.min((612 - 2 * mm) / im.width, (792 - top - mm) / im.height), iw = im.width * k, ih = im.height * k, ix = (612 - iw) / 2, iy = 792 - top - ih;
-    const det = `Fecha ${fmtFecha(g.fecha)} · ${g.concepto || ''}${g.sub ? ' / ' + g.sub : ''}${g.factura ? ' · Factura N° ' + g.factura : ''}${g.nit ? ' · NIT ' + g.nit : ''} · Pagado por ${g.pagadoPor || ''}`;
+    const det = `Fecha ${fmtFecha(g.fecha)} · ${g.concepto || ''}${g.sub ? ' / ' + g.sub : ''}${g.factura ? ' · Factura N° ' + g.factura : ''}${nitTexto(g) ? ' · NIT ' + nitTexto(g) : ''} · Pagado por ${g.pagadoPor || ''}`;
     const c = pdfT('F1', 12, mm, 762, `${i + 1}. ${g.proveedor || g.razon || g.concepto || 'Gasto'} · ${fmtCOP(g.valor)}`) + pdfT('F2', 9, mm, 747, cortoPDF(det, 120), true) + `q ${iw.toFixed(2)} 0 0 ${ih.toFixed(2)} ${ix.toFixed(2)} ${iy.toFixed(2)} cm /Im1 Do Q`;
     paginas.push({ cont: c, img: { bytes, w: im.width, h: im.height } });
   }
@@ -2262,7 +2268,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '39 (26/11/2026)';
+const APP_VERSION = '40 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
