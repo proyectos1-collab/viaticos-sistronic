@@ -368,3 +368,8 @@ input[readonly] { background: var(--surface-2); color: var(--muted); }
 .adm-dec > .btn { flex: 1; padding: 13px; font-size: 16px; }
 .modo-admin .fab { display: none; }
 .modo-admin main { padding-bottom: 24px; }
+.aprob-list { display: flex; flex-direction: column; gap: 6px; }
+.aprob-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; background: var(--surface-2); border-radius: 10px; min-width: 0; }
+.aprob-row span { overflow-wrap: anywhere; min-width: 0; }
+.aprob-row small { color: var(--muted); flex: 0 0 auto; }
+.aprob-row .btn { flex: 0 0 auto; padding: 6px 10px; }

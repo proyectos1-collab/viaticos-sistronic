@@ -379,6 +379,11 @@ input[readonly] { background: var(--surface-2); color: var(--muted); }
 .adm-dec > .btn { flex: 1; padding: 13px; font-size: 16px; }
 .modo-admin .fab { display: none; }
 .modo-admin main { padding-bottom: 24px; }
+.aprob-list { display: flex; flex-direction: column; gap: 6px; }
+.aprob-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; background: var(--surface-2); border-radius: 10px; min-width: 0; }
+.aprob-row span { overflow-wrap: anywhere; min-width: 0; }
+.aprob-row small { color: var(--muted); flex: 0 0 auto; }
+.aprob-row .btn { flex: 0 0 auto; padding: 6px 10px; }
 
 :root{padding-top:env(safe-area-inset-top,0px)}
 [hidden]{display:none!important}
@@ -1710,16 +1715,28 @@ function vFirmaCfg() {
     <p class="hint" style="margin:0">Para subirla: firme en una hoja blanca con esfero oscuro y tómele una foto de cerca. La app quita el fondo sola.</p>`;
 }
 // Inserta la firma en la hoja FO-AD-03 (sheet4 → drawing3), centrada en el recuadro B42:D43
-async function firmaEnExcel(zip) {
-  if (!S.firma) return;
-  const im = await cargarImagen(S.firma), EMU = 12700, boxW = 166, hMax = 22, k = Math.min(hMax / im.height, 150 / im.width);
+async function firmaEnExcel(zip) { if (S.firma) await ponerFirmaXlsx(zip, S.firma, { col: 1, boxW: 166, id: 'rIdFirma', media: 'firma.png', nombre: 'Firma solicitado por', nid: 90 }); }
+// Firma de quien aprueba: recuadro APROBADO (H42:I43) y debajo su nombre y la fecha
+async function firmaAprobadoEnExcel(zip, png, texto) {
+  await ponerFirmaXlsx(zip, png, { col: 7, boxW: 151, id: 'rIdFirmaAprob', media: 'firma-aprobado.png', nombre: 'Firma aprobado por', nid: 91 });
+  const hs = 'xl/worksheets/sheet4.xml'; let x = await zip.file(hs).async('string');
+  const celda = `<c r="H44" s="98" t="inlineStr"><is><t xml:space="preserve">${xesc(texto)}</t></is></c>`;
+  x = /<c r="H44"[^>]*\/>/.test(x) ? x.replace(/<c r="H44"[^>]*\/>/, celda) : x.replace(/<c r="H44"[^>]*>.*?<\/c>/, celda);
+  zip.file(hs, x);
+  const wb = 'xl/workbook.xml'; // el área de impresión llega hasta la fila 43: se extiende para que salga el nombre
+  zip.file(wb, (await zip.file(wb).async('string')).replace(/(<definedName name="_xlnm\.Print_Area" localSheetId="3">[^<]*\$)43</, '$144<'));
+}
+async function ponerFirmaXlsx(zip, png, o) {
+  const im = await cargarImagen(png), EMU = 12700, boxW = o.boxW, hMax = 22, k = Math.min(hMax / im.height, (boxW - 16) / im.width);
   const w = im.width * k, h = im.height * k, colOff = Math.max(0, (boxW - w) / 2), rowOff = 12 + Math.max(0, (hMax - h) / 2);
-  zip.file('xl/media/firma.png', S.firma.split(',')[1], { base64: true });
+  zip.file('xl/media/' + o.media, png.split(',')[1], { base64: true });
   const pd = 'xl/drawings/drawing3.xml', pr = 'xl/drawings/_rels/drawing3.xml.rels';
-  const anc = `<xdr:oneCellAnchor><xdr:from><xdr:col>1</xdr:col><xdr:colOff>${Math.round(colOff * EMU)}</xdr:colOff><xdr:row>41</xdr:row><xdr:rowOff>${Math.round(rowOff * EMU)}</xdr:rowOff></xdr:from><xdr:ext cx="${Math.round(w * EMU)}" cy="${Math.round(h * EMU)}"/><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="90" name="Firma solicitado por"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="rIdFirma"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${Math.round(w * EMU)}" cy="${Math.round(h * EMU)}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:oneCellAnchor>`;
+  const anc = `<xdr:oneCellAnchor><xdr:from><xdr:col>${o.col}</xdr:col><xdr:colOff>${Math.round(colOff * EMU)}</xdr:colOff><xdr:row>41</xdr:row><xdr:rowOff>${Math.round(rowOff * EMU)}</xdr:rowOff></xdr:from><xdr:ext cx="${Math.round(w * EMU)}" cy="${Math.round(h * EMU)}"/><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="${o.nid}" name="${o.nombre}"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="${o.id}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${Math.round(w * EMU)}" cy="${Math.round(h * EMU)}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:oneCellAnchor>`;
   let dx = await zip.file(pd).async('string');
+  if (dx.includes(`r:embed="${o.id}"`)) dx = dx.replace(new RegExp(`<xdr:oneCellAnchor>(?:(?!</xdr:oneCellAnchor>).)*r:embed="${o.id}"(?:(?!</xdr:oneCellAnchor>).)*</xdr:oneCellAnchor>`, 's'), '');
   zip.file(pd, dx.replace('</xdr:wsDr>', anc + '</xdr:wsDr>'));
-  zip.file(pr, (await zip.file(pr).async('string')).replace('</Relationships>', '<Relationship Id="rIdFirma" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/firma.png"/></Relationships>'));
+  const rx = await zip.file(pr).async('string');
+  if (!rx.includes(`Id="${o.id}"`)) zip.file(pr, rx.replace('</Relationships>', `<Relationship Id="${o.id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/${o.media}"/></Relationships>`));
   const ct = await zip.file('[Content_Types].xml').async('string');
   if (!/Extension="png"/i.test(ct)) zip.file('[Content_Types].xml', ct.replace('</Types>', '<Default Extension="png" ContentType="image/png"/></Types>'));
 }
@@ -2889,13 +2906,86 @@ function vDriveEstado() {
    Al enviar a revisión, la app del trabajador crea en SU Drive una "ficha" (JSON) con el resumen de la legalización
    y la comparte con quienes aprueban (sin correo de Google). El aprobador ve las fichas, aprueba o devuelve, y la
    decisión queda en la ficha: la app del trabajador la lee y actualiza el estado. */
-const ADMIN_CORREOS = ['administracion@sistronic.com.co', 'proyectos1@sistronic.com.co', atob('bW9jLmxpYW1nQDU5cm9jbmFkZQ==').split('').reverse().join('')];
+// Roles: el único administrador es proyectos1@ (elige quién aprueba). La lista de aprobadores vive en un archivo de su Drive
+// compartido con el dominio; mientras no se lea, se usa la lista de respaldo.
+const ADMIN_CORREO = 'proyectos1@sistronic.com.co', DOMINIO = 'sistronic.com.co', APROB_RESPALDO = ['administracion@sistronic.com.co'];
 const correoActual = () => (enAndroidGoogle() ? Android.getEmail() || '' : '').toLowerCase();
-const esAdmin = () => ADMIN_CORREOS.includes(correoActual());
+const correoValido = c => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(c);
+const limpiarAprob = l => [...new Set((l || []).map(c => String(c).trim().toLowerCase()).filter(c => correoValido(c) && c !== ADMIN_CORREO))].slice(0, 30);
+let APROB = null, aprobArchivo = '', aprobEstado = null;
+function listaAprob() { if (!APROB) { try { APROB = JSON.parse(localStorage.getItem('aprob:lista') || 'null'); } catch {} APROB = Array.isArray(APROB) ? limpiarAprob(APROB) : APROB_RESPALDO.slice(); } return APROB; }
+const aprobadores = () => [ADMIN_CORREO, ...listaAprob()];
+const esAdminPrincipal = () => correoActual() === ADMIN_CORREO;
+const esAdmin = () => aprobadores().includes(correoActual());
+function ponerListaAprob(l) { APROB = limpiarAprob(l); try { localStorage.setItem('aprob:lista', JSON.stringify(APROB)); } catch {} }
+const Q_APROB = "appProperties has { key='viaticosAprobadores' and value='1' } and trashed = false";
+async function cargarAprobadores() {
+  if (!enAndroidGoogle() || !GW.valido()) return;
+  const antes = esAdmin();
+  for (const c of ['user', 'domain']) {
+    try {
+      const fs = ((await GW.api('GET', `${DRIVE}?corpora=${c}&pageSize=20&orderBy=modifiedTime desc&fields=files(id,owners(emailAddress))&q=${encodeURIComponent(Q_APROB)}`)).files || [])
+        .filter(f => (f.owners || []).some(o => String(o.emailAddress || '').toLowerCase() === ADMIN_CORREO));
+      if (!fs.length) continue;
+      const d = await GW.api('GET', `${DRIVE}/${fs[0].id}?alt=media`);
+      if (Array.isArray(d.aprobadores)) { ponerListaAprob(d.aprobadores); aprobArchivo = fs[0].id; }
+      break;
+    } catch {}
+  }
+  if (antes !== esAdmin()) { leerModoAdmin(); if (esAdmin()) admCargar(); render(); }
+}
+const permiso = (id, cuerpo) => GW.api('POST', `${DRIVE}/${id}/permissions?sendNotificationEmail=false&supportsAllDrives=true`, JSON.stringify(cuerpo), 'application/json; charset=UTF-8').then(() => true, () => false);
+// Comparte una ficha (y su Excel con permiso de edición para poder firmarlo) con una lista de correos
+async function compartirFicha(fichaId, archivos, correos) {
+  const ok = await Promise.all(correos.map(c => permiso(fichaId, { role: 'writer', type: 'user', emailAddress: c })));
+  for (const a of archivos || []) if (a.id) await Promise.all(correos.map(c => permiso(a.id, { role: !a.pdf && /\.xlsx$/i.test(a.nombre || '') ? 'writer' : 'reader', type: 'user', emailAddress: c })));
+  return ok;
+}
+async function guardarAprobadores(lista) {
+  if (!esAdminPrincipal()) return;
+  const nueva = limpiarAprob(lista), viejos = listaAprob(), nuevos = nueva.filter(c => !viejos.includes(c));
+  aprobEstado = { estado: 'guardando' }; render();
+  try {
+    const q = Q_APROB + " and 'me' in owners";
+    const ex = (await GW.api('GET', `${DRIVE}?fields=files(id)&q=${encodeURIComponent(q)}`)).files || [];
+    const datos = { aprobadores: nueva, admin: ADMIN_CORREO, actualizado: new Date().toISOString() };
+    const b = 'aprob' + Date.now(), meta = ex[0] ? { name: 'Aprobadores de viáticos.json' } : { name: 'Aprobadores de viáticos.json', appProperties: { viaticosAprobadores: '1' }, parents: [await GW.carpeta(FICHAS_CARPETA, 'root')] };
+    const body = new Blob([`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: application/json\r\n\r\n`, JSON.stringify(datos), `\r\n--${b}--`]);
+    const r = await GW.api(ex[0] ? 'PATCH' : 'POST', `https://www.googleapis.com/upload/drive/v3/files${ex[0] ? '/' + ex[0].id : ''}?uploadType=multipart&fields=id`, body, 'multipart/related; boundary=' + b);
+    aprobArchivo = r.id;
+    const dom = await permiso(r.id, { role: 'reader', type: 'domain', domain: DOMINIO, allowFileDiscovery: true });
+    await Promise.all(nueva.map(c => permiso(r.id, { role: 'reader', type: 'user', emailAddress: c })));
+    ponerListaAprob(nueva);
+    // Las legalizaciones pendientes también le llegan a los aprobadores nuevos
+    let compartidas = 0;
+    if (nuevos.length) { await admCargar(); for (const f of ADM.fichas.filter(x => x.p.estado === 'pendiente')) { await compartirFicha(f.id, f.d.archivos, nuevos); compartidas++; } }
+    aprobEstado = { estado: 'ok', dom, compartidas, nuevos: nuevos.length };
+    toast('Lista de aprobadores guardada');
+  } catch (e) { aprobEstado = { estado: 'error', msg: e.message || 'No se pudo guardar' }; }
+  render();
+}
+function vAprobadoresCfg() {
+  if (!esAdminPrincipal()) return '';
+  const l = listaAprob(), e = aprobEstado;
+  return `<h2>Aprobadores de legalizaciones</h2>
+  <div class="card form">
+    <p class="hint" style="margin:0">Usted es el administrador. Estas cuentas ven el panel de <b>Aprobaciones</b> y pueden aprobar o devolver legalizaciones. Usted también puede aprobar.</p>
+    <div class="aprob-list">
+      <div class="aprob-row"><span>👑 ${esc(ADMIN_CORREO)}</span><small>Administrador</small></div>
+      ${l.map(c => `<div class="aprob-row"><span>✅ ${esc(c)}</span><button class="btn danger" data-act="aprob-quitar" data-c="${esc(c)}" ${e && e.estado === 'guardando' ? 'disabled' : ''}>Quitar</button></div>`).join('')}
+      ${l.length ? '' : '<div class="note" style="margin:0">No hay más aprobadores: solo usted aprueba.</div>'}
+    </div>
+    <div class="row" style="flex-wrap:nowrap"><input id="aprob-nuevo" type="email" inputmode="email" autocapitalize="off" placeholder="correo@sistronic.com.co" style="flex:1;min-width:0"><button class="btn primary" data-act="aprob-agregar" style="flex:0 0 auto" ${e && e.estado === 'guardando' ? 'disabled' : ''}>Agregar</button></div>
+    ${!e ? '' : e.estado === 'guardando' ? '<div class="note ia-busy"><span class="spin"></span> <span class="txt">Guardando y avisando a las apps…</span></div>'
+      : e.estado === 'ok' ? `<div class="note ok">✔ Guardado. Las apps de los trabajadores toman la lista nueva al abrirse.${e.compartidas && e.nuevos ? ` Se compartieron ${e.compartidas} legalización${e.compartidas === 1 ? '' : 'es'} pendiente${e.compartidas === 1 ? '' : 's'} con ${e.nuevos === 1 ? 'el aprobador nuevo' : 'los aprobadores nuevos'}.` : ''}${e.dom ? '' : '<br>⚠ Google no dejó compartir la lista con todo @' + DOMINIO + '. Mientras se habilita, las apps usan la lista de respaldo.'}</div>`
+      : `<div class="note">⚠ ${esc(e.msg)}</div>`}
+  </div>`;
+}
+
 const FICHAS_CARPETA = 'Viáticos Sistronic - fichas de aprobación (no borrar)';
 const DRIVE = 'https://www.googleapis.com/drive/v3/files';
 let modoAdmin = false;
-function leerModoAdmin() { let m = ''; try { m = localStorage.getItem('admin:modo:' + correoActual()) || ''; } catch {} modoAdmin = esAdmin() && (m ? m === 'aprob' : correoActual().startsWith('administracion@')); }
+function leerModoAdmin() { let m = ''; try { m = localStorage.getItem('admin:modo:' + correoActual()) || ''; } catch {} modoAdmin = esAdmin() && (m ? m === 'aprob' : !esAdminPrincipal()); }
 function ponerModoAdmin(on) { modoAdmin = !!on && esAdmin(); try { localStorage.setItem('admin:modo:' + correoActual(), on ? 'aprob' : 'mis'); } catch {} if (modoAdmin) admCargar(); }
 
 function datosFicha(d) {
@@ -2934,11 +3024,9 @@ async function publicarFicha(d) {
     const b = 'ficha' + Date.now(), meta = ex[0] ? { name: nombre, appProperties: props } : { name: nombre, appProperties: props, parents: [await GW.carpeta(FICHAS_CARPETA, 'root')] };
     const body = new Blob([`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: application/json\r\n\r\n`, JSON.stringify(datos), `\r\n--${b}--`]);
     const r = await GW.api(ex[0] ? 'PATCH' : 'POST', `https://www.googleapis.com/upload/drive/v3/files${ex[0] ? '/' + ex[0].id : ''}?uploadType=multipart&fields=id`, body, 'multipart/related; boundary=' + b);
-    const yo = correoActual(), compartir = (id, role) => Promise.all(ADMIN_CORREOS.filter(c => c !== yo).map(c =>
-      GW.api('POST', `${DRIVE}/${id}/permissions?sendNotificationEmail=false&supportsAllDrives=true`, JSON.stringify({ role, type: 'user', emailAddress: c }), 'application/json; charset=UTF-8').then(() => true, () => false)));
-    const ok = await compartir(r.id, 'writer');
-    if (!ok.some(Boolean) && ADMIN_CORREOS.some(c => c !== yo)) throw new Error('Google no permitió compartir la ficha con administración');
-    for (const a of datos.archivos) if (a.id) await compartir(a.id, 'reader');
+    const yo = correoActual(), para = aprobadores().filter(c => c !== yo);
+    const ok = await compartirFicha(r.id, datos.archivos, para);
+    if (para.length && !ok.some(Boolean)) throw new Error('Google no permitió compartir la ficha con los aprobadores');
     d.ficha = 'ok';
   } catch (e) { d.ficha = (e && e.message) || 'error desconocido'; }
   render();
@@ -3030,18 +3118,40 @@ function vFichaDetalle(f) {
   if (d.lineas) h += `<h2>Formato FO-AD-03</h2><div class="tbl-wrap"><table><tr><th>Concepto</th><th class="r">Cant.</th><th>Factura</th><th class="r">Valor</th></tr>${d.lineas.map(l => `<tr><td>${esc(l.d)}</td><td class="r">${l.n}</td><td>${esc(l.f)}</td><td class="r">${fmtCOP(l.t)}</td></tr>`).join('')}<tr class="tot"><td colspan="3"><b>Total</b></td><td class="r"><b>${fmtCOP(d.total)}</b></td></tr></table></div>`;
   if (d.cortes) h += `<h2>Cortes del proyecto</h2><div class="tbl-wrap"><table><tr><th>Corte</th><th class="r">Gastos</th><th class="r">Legalizado</th><th class="r">Saldo</th><th>Estado</th></tr>${d.cortes.map(c => `<tr><td>${esc(c.nombre)}</td><td class="r">${c.n}</td><td class="r">${fmtCOP(c.total)}</td><td class="r">${fmtCOP(c.saldo)}</td><td>${esc(c.estado)}</td></tr>`).join('')}</table></div>`;
   if (d.porOS && d.porOS.length) h += `<h2>Resumen por orden de servicio</h2><div class="tbl-wrap"><table><tr><th>OS</th><th>Cliente</th><th class="r">Gastos</th><th class="r">Empleado</th><th class="r">Sistronic</th></tr>${d.porOS.map(o => `<tr><td>${esc(o.os || 'Sin OS')}</td><td>${esc(o.cliente)}</td><td class="r">${o.n}</td><td class="r">${fmtCOP(o.emp)}</td><td class="r">${fmtCOP(o.sis)}</td></tr>`).join('')}</table></div>`;
+  if (p.estado === 'aprobado') h += `<div class="hint">${p.firmado === 'si' ? '✍️ El Excel quedó firmado en el recuadro APROBADO.' : p.firmado === 'parcial' ? '⚠ Solo se pudo firmar parte de los Excel.' : '⚠ El Excel no se pudo firmar (se envió antes de la versión 52 o no hay permiso de edición).'}</div>`;
+  if (ADM.pideFirma && !S.firma && p.estado !== 'aprobado') h += `<div class="card form" id="adm-firma"><b>Para aprobar necesita su firma</b><p class="hint" style="margin:0">Se pondrá en el recuadro <b>APROBADO</b> del formato. Se guarda una sola vez.</p>${vFirmaCfg().replace(/<p class="hint"[^>]*>Se pone en[\s\S]*?<\/p>/, '')}</div>`;
   if (ADM.devolviendo) h += `<div class="card form adm-dec"><label class="field"><span>Motivo de la devolución</span><textarea id="adm-nota" rows="3" placeholder="Ej.: falta la factura del hotel del 12/11"></textarea></label><div class="row"><button class="btn danger" data-act="adm-devolver-ok" ${ADM.decidiendo ? 'disabled' : ''}>↩ Devolver al trabajador</button><button class="btn" data-act="adm-cancelar">Cancelar</button></div></div>`;
   else h += `<div class="row adm-dec">${p.estado !== 'aprobado' ? `<button class="btn primary" data-act="adm-aprobar" ${ADM.decidiendo ? 'disabled' : ''}>✔ Aprobar</button>` : ''}${p.estado !== 'devuelto' ? `<button class="btn" data-act="adm-devolver" ${ADM.decidiendo ? 'disabled' : ''}>↩ Devolver</button>` : ''}</div>`;
   if (ADM.decidiendo) h += `<div class="note ia-busy"><span class="spin"></span> <span class="txt">Guardando la decisión…</span></div>`;
   return h;
 }
+async function firmarExcelAprobado(id, texto) {
+  const t = await GW.pedir();
+  const r = await fetch(`${DRIVE}/${id}?alt=media&supportsAllDrives=true`, { headers: { Authorization: 'Bearer ' + t } });
+  if (!r.ok) throw new Error('No se pudo abrir el Excel (' + r.status + ')');
+  const JSZip = await cargarScript('vendor/jszip.min.js', 'JSZip'), zip = await JSZip.loadAsync(await r.arrayBuffer());
+  if (!zip.file('xl/worksheets/sheet4.xml') || !zip.file('xl/drawings/drawing3.xml')) throw new Error('El Excel no tiene el formato FO-AD-03');
+  await firmaAprobadoEnExcel(zip, S.firma, texto);
+  const mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', bytes = await zipCrcFix(await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' }));
+  const restr = ro => GW.api('PATCH', `${DRIVE}/${id}?supportsAllDrives=true&fields=id`, JSON.stringify({ contentRestrictions: [ro ? { readOnly: true, reason: 'Legalización aprobada desde la app Viáticos Sistronic. No modificar.' } : { readOnly: false }] }), 'application/json; charset=UTF-8');
+  await restr(false).catch(() => {});
+  await GW.api('PATCH', `https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=media&supportsAllDrives=true&fields=id`, new Blob([bytes], { type: mime }), mime);
+  await restr(true).catch(() => {});
+}
 async function admDecidir(estado, nota) {
   const f = ADM.fichas.find(x => x.id === ADM.abierta); if (!f || ADM.decidiendo) return;
+  if (estado === 'aprobado' && !S.firma) { ADM.pideFirma = true; render(); setTimeout(() => $('#adm-firma')?.scrollIntoView({ block: 'center' }), 50); return; }
   ADM.decidiendo = true; render();
   try {
     const actual = await GW.api('GET', `${DRIVE}/${f.id}?fields=appProperties`);
     if (actual.appProperties && actual.appProperties.enviado !== f.p.enviado) { ADM.decidiendo = false; ADM.devolviendo = false; toast('El trabajador la reenvió con cambios. Revise la versión nueva.'); await admCargar(); return; }
-    const props = { estado, nota: (nota || '').slice(0, 100), decididoPor: correoActual(), decididoEn: new Date().toISOString() };
+    const ahora = new Date().toISOString(), props = { estado, nota: (nota || '').slice(0, 100), decididoPor: correoActual(), decididoEn: ahora };
+    if (estado === 'aprobado') { // firma de quien aprueba en el Excel de la legalización
+      const xs = (f.d.archivos || []).filter(a => a.id && !a.pdf && /\.xlsx$/i.test(a.nombre || '') && !/^Resumen de cortes/i.test(a.nombre || ''));
+      const pf = perfil(), texto = `Aprobó: ${(pf && pf.nombre) || correoActual()} · ${fmtFecha(ahora.slice(0, 10))}`;
+      let ok = 0; for (const a of xs) { try { await firmarExcelAprobado(a.id, texto); ok++; } catch (e) { console.warn('firma', e); } }
+      props.firmado = xs.length ? (ok === xs.length ? 'si' : ok ? 'parcial' : 'no') : 'no';
+    }
     await GW.api('PATCH', `${DRIVE}/${f.id}?fields=id`, JSON.stringify({ appProperties: props }), 'application/json; charset=UTF-8');
     Object.assign(f.p, props); ADM.devolviendo = false; ADM.decidiendo = false;
     toast(estado === 'aprobado' ? 'Legalización aprobada' : 'Legalización devuelta al trabajador');
@@ -3065,7 +3175,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '51 (26/11/2026)';
+const APP_VERSION = '52 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
@@ -3122,6 +3232,7 @@ function vConfig() {
     <div class="card" id="sync-cfg" style="margin-top:12px">${vSyncCfg()}</div>
     <h2>Conceptos de gasto</h2>
     <div class="card form"><div class="row"><button class="btn" data-act="cp-abrir">Administrar conceptos y subconceptos</button></div></div>
+    ${vAprobadoresCfg()}
     <h2>Firma para la legalización</h2>
     <div class="card form" id="firma-cfg">${vFirmaCfg()}</div>
     <h2>Facturas repetidas</h2>
@@ -3222,7 +3333,7 @@ function pintarLogin() {
     <p class="hint">Sus gastos se guardan en este equipo y en una carpeta privada de la app en su Google Drive, para verlos desde cualquier equipo con la misma cuenta.</p>
   </div>`;
 }
-window.onLoginOk = email => { programarSync(300); leerModoAdmin(); if (esAdmin()) admCargar(); setTimeout(() => revisarFichas(true), 4000); loginEstado = { cargando: false, msg: '', config: false }; const p = perfil(); toast('Bienvenido, ' + (p ? p.corto : email)); pintarLogin(); render(); };
+window.onLoginOk = email => { programarSync(300); leerModoAdmin(); if (esAdmin()) admCargar(); setTimeout(cargarAprobadores, 1500); setTimeout(() => revisarFichas(true), 4000); loginEstado = { cargando: false, msg: '', config: false }; const p = perfil(); toast('Bienvenido, ' + (p ? p.corto : email)); pintarLogin(); render(); };
 window.onLoginError = (msg, config) => { loginEstado = { cargando: false, msg, config: config === 'config' }; pintarLogin(); };
 window.onLogout = () => { pintarLogin(); render(); };
 
@@ -3532,6 +3643,8 @@ document.addEventListener('click', async e => {
     case 'drive-xlsx': if (cortesDe(viaje()).length) enviarFinalCortes(); else subirDrive('xlsx'); break;
     case 'cortes-resumen': try { await excelResumenCortes(viaje()); } catch (err) { toast('No se pudo exportar: ' + err.message); } break;
     case 'drive-backup': subirDrive('backup'); break;
+    case 'aprob-agregar': { const c = ($('#aprob-nuevo')?.value || '').trim().toLowerCase(); if (!correoValido(c)) { toast('Escriba un correo válido'); break; } if (c === ADMIN_CORREO || listaAprob().includes(c)) { toast('Ese correo ya aprueba'); break; } guardarAprobadores([...listaAprob(), c]); break; }
+    case 'aprob-quitar': guardarAprobadores(listaAprob().filter(c => c !== t.dataset.c)); break;
     case 'adm-modo': ponerModoAdmin(t.dataset.m === 'aprob'); ADM.abierta = ''; render(); window.scrollTo(0, 0); break;
     case 'adm-filtro': ADM.filtro = t.dataset.f; render(); break;
     case 'adm-recargar': admCargar(); break;
@@ -3693,6 +3806,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#sheet'
   render();
   // Guía de la clave de IA: no depende de que la sincronización termine (puede quedar esperando un toque)
   leerModoAdmin(); if (esAdmin()) setTimeout(admCargar, 1500);
+  setTimeout(cargarAprobadores, 2000); setInterval(() => { if (document.visibilityState === 'visible') cargarAprobadores(); }, 600000);
   // Enlace desde la app de Órdenes de servicio (?os=3201&cliente=Abbott&cot=34-2): abre "Registrar gasto" con la OS ya puesta
   try {
     const q = new URLSearchParams(location.search), osQ = (q.get('os') || '').trim().replace(/^os\s*/i, '').trim().slice(0, 20);
