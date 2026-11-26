@@ -3065,7 +3065,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '50 (26/11/2026)';
+const APP_VERSION = '51 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
@@ -3474,7 +3474,7 @@ async function exportarSiigo() {
 
 /* ---------- Toast ---------- */
 let toastT;
-function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, 2600); }
+function toast(msg, ms) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, ms || 2600); }
 
 /* ---------- Eventos ---------- */
 function moneyFormat(el) {
@@ -3693,6 +3693,23 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#sheet'
   render();
   // Guía de la clave de IA: no depende de que la sincronización termine (puede quedar esperando un toque)
   leerModoAdmin(); if (esAdmin()) setTimeout(admCargar, 1500);
+  // Enlace desde la app de Órdenes de servicio (?os=3201&cliente=Abbott&cot=34-2): abre "Registrar gasto" con la OS ya puesta
+  try {
+    const q = new URLSearchParams(location.search), osQ = (q.get('os') || '').trim().replace(/^os\s*/i, '').trim().slice(0, 20);
+    if (osQ) {
+      const cliQ = (q.get('cliente') || '').trim().slice(0, 60), cotQ = (q.get('cot') || '').trim().slice(0, 30), vv = viaje();
+      if (modoAdmin) { modoAdmin = false; render(); } // quien aprueba también puede registrar gastos: entra a sus viáticos
+      let otraOS = '';
+      if (!esServ(vv)) { // viaje normal: la OS va en la cabecera (solo si está vacía)
+        if (vv.os && vv.os.trim().replace(/^os\s*/i, '').trim().toLowerCase() !== osQ.toLowerCase()) otraOS = vv.os.trim();
+        if (!vv.os) vv.os = osQ; if (!vv.cliente && cliQ) vv.cliente = cliQ; if (!vv.cot && cotQ) vv.cot = cotQ; guardar(); render();
+      }
+      abrirGasto();
+      if (esServ(vv)) { editando.os = osQ; editando.osCliente = cliQ || osClientes()[osQ] || ''; pintarGasto(); } // servicios diarios: la OS va en cada gasto
+      if (otraOS) setTimeout(() => toast(`Ojo: este viaje es de la OS ${otraOS}, no de la ${osQ}. Cambie de viaje si corresponde.`, 7000), 400);
+      history.replaceState(null, '', location.pathname + location.hash);
+    }
+  } catch (e) { console.error(e); }
   setTimeout(() => revisarFichas(true), 5000);
   setInterval(() => { if (document.visibilityState !== 'visible') return; revisarFichas(); if (modoAdmin && !ADM.cargando && Date.now() - ADM.fecha > 110000) admCargar(); }, 30000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { setTimeout(() => revisarFichas(true), 3000); if (modoAdmin) setTimeout(admCargar, 1000); } });
