@@ -2205,7 +2205,7 @@ async function subirDrive(tipo, corteId) {
     const vx = corte ? vistaCorte(v0, corte) : vistaAbierta(v0);
     const { blob, nombre } = tipo === 'backup' ? await copiaSeguridad(true) : await exportarExcel(true, vx);
     const v = v0, c = driveCfg();
-    const base = c.porViaje ? `COT ${v.cot || 'sin COT'} ${v.cliente || ''}`.replace(/[\\/:*?"<>|]+/g, ' ').trim() : '';
+    const base = c.porViaje ? carpetaProyecto(v) : '';
     const sub = tipo === 'backup' ? 'Copias de seguridad' : cortesDe(v0).length ? carpetaProyecto(v0) : base;
     if (tipo !== 'backup') await subirFacturasPDF(vx, c.carpetaId ? c.carpetaNombre || 'Carpeta compartida' : c.carpeta || 'Viáticos Sistronic', c.carpetaId || '', sub, t => { driveUltimo = { estado: 'subiendo', txt: t }; render(); });
     driveUltimo = { estado: 'subiendo' }; render();
@@ -2268,7 +2268,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '40 (26/11/2026)';
+const APP_VERSION = '41 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
@@ -2334,7 +2334,7 @@ function vConfig() {
       <div class="row"><button class="btn" data-act="drive-elegir">Cambiar carpeta</button><button class="btn" data-act="drive-propia">Usar una carpeta de mi Drive</button></div>`
     : `<label class="field"><span>Carpeta en mi Google Drive</span><input id="dr-carpeta" value="${esc(c.carpeta)}"></label>
       <button class="btn block" data-act="drive-elegir">📁 Elegir una carpeta que me compartieron</button>`}
-    <label class="row" style="align-items:center;gap:10px;flex-wrap:nowrap"><input id="dr-porviaje" type="checkbox" ${c.porViaje ? 'checked' : ''} style="width:22px;height:22px;flex:0 0 22px;min-width:0"> <span style="flex:1">Crear una subcarpeta por viaje (ej. "COT 12-3 Cliente")</span></label>
+    <label class="row" style="align-items:center;gap:10px;flex-wrap:nowrap"><input id="dr-porviaje" type="checkbox" ${c.porViaje ? 'checked' : ''} style="width:22px;height:22px;flex:0 0 22px;min-width:0"> <span style="flex:1">Crear una carpeta por proyecto (ej. "COT 12-3 Cliente - Proyecto")</span></label>
     <div class="row"><button class="btn primary" data-act="drive-xlsx" ${driveSubiendo ? 'disabled' : ''}>Subir Excel a Drive</button><button class="btn" data-act="drive-backup" ${driveSubiendo ? 'disabled' : ''}>Copia de seguridad a Drive</button></div>
     ${vDriveEstado()}
     <p class="hint" style="margin:0">Si el archivo ya existe en esa carpeta, se reemplaza por la versión nueva. Para subir a una carpeta compartida, la persona que la compartió debe darle permiso de Editor.</p>
