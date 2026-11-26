@@ -1920,28 +1920,31 @@ const hojaAbierta = () => !!($('#sheet') && $('#sheet').innerHTML.trim()) || !!c
 async function limpiarEjemplo() {
   const email = String((window.Android && Android.web && GW.ls('email')) || '').toLowerCase();
   if (!email || EXCEPCIONES_SHA.includes(await sha256Hex(email))) return false;
-  const E = EJEMPLO_HUELLAS, gset = new Set(E.gastos), norm = t => String(t || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  // Se hace una sola vez por equipo y cuenta, y solo sobre el viaje de ejemplo original (el que aún tiene sus gastos de ejemplo). Nunca toca lo que el usuario escribe después.
+  const hecho = 'limpio:' + email;
+  try { if (localStorage.getItem(hecho)) return false; } catch {}
+  const E = EJEMPLO_HUELLAS, gset = new Set(E.gastos);
   let cambio = false;
   for (const v of [...S.viajes]) {
-    const marcado = (v.cedula && await sha256Hex(String(v.cedula).replace(/\D/g, '')) === E.ced) || (v.trabajador && await sha256Hex(norm(v.trabajador)) === E.nom);
-    if (!marcado) continue;
-    const quedan = [];
-    for (const g of v.gastos) { if (!g.foto && gset.has(await sha256Hex(`${g.fecha}|${g.valor}|${g.factura || ''}`))) { cambio = true; continue; } quedan.push(g); }
-    v.gastos = quedan;
-    if (v.cedula && await sha256Hex(String(v.cedula).replace(/\D/g, '')) === E.ced) { v.cedula = ''; cambio = true; }
-    if (v.trabajador && await sha256Hex(norm(v.trabajador)) === E.nom) { v.trabajador = ''; cambio = true; }
-    if (!v.gastos.length && !(v.cortes && v.cortes.length) && !v.revision) { S.viajes = S.viajes.filter(x => x !== v); cambio = true; }
+    const quedan = []; let deEjemplo = 0;
+    for (const g of v.gastos) { if (!g.foto && gset.has(await sha256Hex(`${g.fecha}|${g.valor}|${g.factura || ''}`))) { deEjemplo++; continue; } quedan.push(g); }
+    if (deEjemplo < 5) continue; // no es el viaje de ejemplo
+    v.gastos = quedan; cambio = true;
+    if (v.cedula && await sha256Hex(String(v.cedula).replace(/\D/g, '')) === E.ced) v.cedula = '';
+    if (v.trabajador && await sha256Hex(String(v.trabajador).trim().toLowerCase().replace(/\s+/g, ' ')) === E.nom) v.trabajador = '';
+    if (!v.gastos.length && !(v.cortes && v.cortes.length) && !v.revision) S.viajes = S.viajes.filter(x => x !== v);
   }
-  const p = S.perfil || {};
-  if (p.cedula && await sha256Hex(String(p.cedula).replace(/\D/g, '')) === E.ced) { p.cedula = ''; cambio = true; }
-  if (p.trabajador && await sha256Hex(norm(p.trabajador)) === E.nom) { p.trabajador = ''; cambio = true; }
   if (cambio) {
-    const usados = new Set(); for (const v of S.viajes) for (const g of v.gastos) { usados.add(claveProv(g.nit, g.proveedor)); usados.add(claveProv("", g.proveedor)); }
+    const p = S.perfil || {};
+    if (p.cedula && await sha256Hex(String(p.cedula).replace(/\D/g, '')) === E.ced) p.cedula = '';
+    if (p.trabajador && await sha256Hex(String(p.trabajador).trim().toLowerCase().replace(/\s+/g, ' ')) === E.nom) p.trabajador = '';
+    const usados = new Set(); for (const v of S.viajes) for (const g of v.gastos) { usados.add(claveProv(g.nit, g.proveedor)); usados.add(claveProv('', g.proveedor)); }
     for (const k of Object.keys(S.proveedores || {})) if (E.prov.includes(await sha256Hex(k)) && !usados.has(k)) delete S.proveedores[k];
     if (!S.viajes.length) S.viajes.push(nuevoViaje());
     if (!S.viajes.some(v => v.id === S.activo)) S.activo = S.viajes[0].id;
     await guardar();
   }
+  if (cambio || (SM && SM.ultima)) { try { localStorage.setItem(hecho, '1'); } catch {} }
   return cambio;
 }
 async function sincronizar(manual) {
@@ -2119,7 +2122,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '28 (26/11/2026)';
+const APP_VERSION = '29 (26/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
