@@ -301,3 +301,13 @@ details summary { color: var(--accent); }
 .scan-seg { justify-content: center; }
 .scan-seg button { color: #fff; background: transparent; border-color: rgba(255,255,255,.3); }
 .scan-seg button[aria-pressed="true"] { background: #fff; color: #082759; border-color: #fff; }
+
+/* Facturas repetidas */
+.dup-grupo { padding: 10px 12px; margin-bottom: 10px; }
+.dup-tit { font-weight: 700; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+.dup-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+.dup-row:first-of-type { border-top: 0; }
+.dup-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.dup-info small { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.dup-row .btn { flex: none; }
+.dup-btn { background: #b3261e; color: #fff; border-color: #b3261e; font-weight: 600; }
