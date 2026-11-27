@@ -102,12 +102,48 @@ function anticiposDe(v) {
   if (!Array.isArray(v.anticipos)) v.anticipos = Number(v.anticipo) > 0 ? [{ id: uid(), fecha: v.inicio || todayISO(), valor: Number(v.anticipo) || 0, destino: 'empleado', nota: '' }] : [];
   return v.anticipos;
 }
+/* Anticipo compartido: si al viaje no le alcanza su anticipo, el gasto del empleado se cubre solo con el saldo de otro
+   proyecto (el más antiguo con saldo). Queda en el gasto: g.antDe = viaje dueño del anticipo, g.antMonto = valor cubierto.
+   El gasto sigue en la legalización de su viaje; el anticipo "se mueve" con él: el dueño lo descuenta y el viaje lo recibe. */
+const nomViaje = x => x ? tituloViaje(x).replace('🧰 ', '') : 'otro viaje';
+function movimientosAnt(v) {
+  const m = new Map(), add = (otro, val, fecha, tipo) => { const k = tipo + ':' + otro; const o = m.get(k) || { tipo, ref: otro, valor: 0, fecha: '' }; o.valor += val; if (fecha > o.fecha) o.fecha = fecha; m.set(k, o); };
+  for (const g of v.gastos) if (g.antDe && Number(g.antMonto) > 0) add(g.antDe, Number(g.antMonto), g.fecha || '', 'recibido');
+  for (const x of (S ? S.viajes : [])) if (x.id !== v.id) for (const g of x.gastos) if (g.antDe === v.id && Number(g.antMonto) > 0) add(x.id, -Number(g.antMonto), g.fecha || '', 'usado');
+  return [...m.values()].map(o => { const x = S.viajes.find(y => y.id === o.ref), src = o.tipo === 'recibido' ? x : v, tp = src ? anticiposDe(src).reduce((t, a) => (t[a.destino === 'tarjeta' ? 1 : 0] += Number(a.valor) || 0, t), [0, 0]) : [1, 0];
+    return { mov: o.tipo, ref: o.ref, fecha: o.fecha, valor: o.valor, destino: tp[1] > tp[0] ? 'tarjeta' : 'empleado', nota: o.tipo === 'recibido' ? 'Gastos pagados con el anticipo de ' + nomViaje(x) : 'Anticipo usado en gastos de ' + nomViaje(x) }; });
+}
+const anticiposYMov = v => [...anticiposDe(v), ...movimientosAnt(v)];
+const prestadoAnt = v => -movimientosAnt(v).filter(a => a.mov === 'usado').reduce((t, a) => t + a.valor, 0); // positivo
+const recibidoAbierto = v => sum(v.gastos.filter(g => g.antDe && !g.corte), g => Number(g.antMonto) || 0);
 function totalesAnticipo(v) {
-  const l = anticiposDe(v), t = { total: 0, empleado: 0, tarjeta: 0, n: l.length };
+  const l = anticiposYMov(v), t = { total: 0, empleado: 0, tarjeta: 0, n: anticiposDe(v).length };
   for (const a of l) { const x = Number(a.valor) || 0; t.total += x; t[a.destino === 'tarjeta' ? 'tarjeta' : 'empleado'] += x; }
   return t;
 }
 const sincAnticipo = v => { v.anticipo = totalesAnticipo(v).total; };
+const recalcAnticipos = () => { if (S && S.viajes) S.viajes.forEach(sincAnticipo); };
+// Saldo libre de un viaje (lo que no se ha gastado ni prestado), sin contar el gasto que se está editando
+function saldoLibre(x, sinId) { const g0 = x.gastos.filter(g => g.id !== sinId), y = { ...x, gastos: g0 }; return indicadores(vistaAbierta(y)).saldo; }
+function asignarAnticipo(g, v) {
+  delete g.antDe; delete g.antMonto;
+  const val = Number(g.valor) || 0; if (g.pagadoPor === 'Sistronic' || !(val > 0)) return;
+  // quitar temporalmente el gasto (versión anterior) para calcular saldos sin él
+  const prev = []; for (const x of S.viajes) { const i = x.gastos.findIndex(y => y.id === g.id); if (i >= 0) prev.push([x, i, x.gastos.splice(i, 1)[0]]); }
+  try {
+    recalcAnticipos();
+    const propio = Math.max(0, saldoLibre(v, g.id)), falta = val - propio; if (falta <= 0) return;
+    const fuente = S.viajes.filter(x => x.id !== v.id && !viajeBloqueado(x) && anticiposDe(x).some(a => Number(a.valor) > 0))
+      .map(x => ({ x, d: saldoLibre(x, g.id) })).filter(o => o.d > 0).sort((a, b) => String(a.x.inicio).localeCompare(String(b.x.inicio)))[0];
+    if (fuente) { g.antDe = fuente.x.id; g.antMonto = Math.min(falta, fuente.d); }
+  } finally { for (const [x, i, old] of prev.reverse()) x.gastos.splice(i, 0, old); recalcAnticipos(); }
+}
+const textoAntDe = g => { const x = S.viajes.find(y => y.id === g.antDe); return `💳 ${Number(g.antMonto) < Number(g.valor) ? fmtCOP(g.antMonto) + ' pagados' : 'Pagado'} con el anticipo de ${nomViaje(x)}`; };
+function vTotalGeneral() {
+  if (!S || !S.viajes.length) return '';
+  let ant = 0, con = 0; for (const x of S.viajes) { ant += Number(x.anticipo) || 0; con += empleadoTotal(x.gastos); }
+  return `<div class="tot-gen no-print"><div class="tg-t">Todos sus viajes y servicios (${S.viajes.length})</div><div class="tg-n"><div><small>Anticipos</small><b class="num">${fmtCOP(ant)}</b></div><div><small>Consumido</small><b class="num">${fmtCOP(con)}</b></div><div class="${ant - con < 0 ? 'neg' : ''}"><small>Saldo</small><b class="num">${fmtCOP(ant - con)}</b></div></div></div>`;
+}
 let antQuitando = '';
 function vAnticipos(v) {
   const l = anticiposDe(v);
@@ -119,6 +155,7 @@ function vAnticipos(v) {
       <div class="seg" role="group">${Object.entries(DEST_ANT).map(([k, [ic, tx]]) => `<button type="button" data-act="ant-destino" data-id="${a.id}" data-d="${k}" aria-pressed="${(a.destino || 'empleado') === k}">${ic} ${tx}</button>`).join('')}</div>
       <input class="ant-nota" data-ant="nota" data-id="${a.id}" value="${esc(a.nota || '')}" placeholder="Nota (opcional): ej. consignación Bancolombia">
     </div>`).join('') : '<div class="note" style="margin:0">Todavía no hay anticipos.</div>'}
+    ${movimientosAnt(v).map(a => `<div class="ant-item ant-tras ${a.mov}"><b>${a.mov === 'usado' ? '↪ Usado en otro proyecto' : '↩ Cubierto con otro anticipo'}</b><div>${esc(a.nota)}</div><div class="hint" style="margin:2px 0 0"><b class="num">${fmtCOP(a.valor)}</b> · se calcula solo con los gastos</div></div>`).join('')}
     <button type="button" class="btn block" data-act="ant-agregar">+ Agregar anticipo</button>
     <div class="ant-tot" id="ant-tot">${vAntTot(v)}</div></div>`;
 }
@@ -146,6 +183,7 @@ let saveRes = [];
 function guardar() { clearTimeout(saveTimer); return new Promise(r => { saveRes.push(r); saveTimer = setTimeout(guardarYa, 60); }); }
 async function guardarYa() {
   clearTimeout(saveTimer); const rs = saveRes; saveRes = [];
+  try { recalcAnticipos(); } catch (e) { console.error(e); }
   await DB.set('state', S);
   try { await sellar(); if (sellar.cambio) programarSync(); } catch (e) { console.error(e); }
   rs.forEach(r => r());
@@ -283,6 +321,7 @@ const vVolverOS = () => origenOS() ? `<div class="os-volver no-print"><button ty
 
 /* ---------- Render ---------- */
 function render() {
+  try { recalcAnticipos(); } catch (e) { console.error(e); }
   const v = viaje();
   if (modoAdmin && !esAdmin()) modoAdmin = false;
   document.body.classList.toggle('modo-admin', modoAdmin);
@@ -310,7 +349,7 @@ function vGastos(v) {
   const I = indicadores(v);
   const pct = Math.min(100, Math.max(0, I.ejecutado * 100));
   const nDup = gruposDuplicados().filter(gr => gr.some(x => x.v.id === v.id)).length;
-  let h = `${vAvisoBloqueo(v)}${viajeBloqueado(v) ? '' : vFaltanDatos(v)}${vRecordatorio()}${nDup ? `<div class="note dup" style="margin-bottom:12px">⛔ <b>${nDup === 1 ? 'Hay una factura registrada más de una vez' : `Hay ${nDup} facturas registradas más de una vez`}</b> en este viaje.<div class="row" style="margin-top:8px"><button class="btn dup-btn" data-act="dup-abrir">Revisar y eliminar repetidas</button></div></div>` : ''}<h2>Control de gastos</h2>
+  let h = `${vTotalGeneral()}${vAvisoBloqueo(v)}${viajeBloqueado(v) ? '' : vFaltanDatos(v)}${vRecordatorio()}${nDup ? `<div class="note dup" style="margin-bottom:12px">⛔ <b>${nDup === 1 ? 'Hay una factura registrada más de una vez' : `Hay ${nDup} facturas registradas más de una vez`}</b> en este viaje.<div class="row" style="margin-top:8px"><button class="btn dup-btn" data-act="dup-abrir">Revisar y eliminar repetidas</button></div></div>` : ''}<h2>Control de gastos</h2>
   <div class="kpis">
     <div class="kpi hero ${I.saldo < 0 ? 'neg' : ''}"><div><div class="l">Saldo disponible</div><div class="v num">${fmtCOP(I.saldo)}</div></div>
       <div style="text-align:right"><div class="l">Anticipo</div><div class="num" style="font-weight:700">${fmtCOP(I.anticipo)}</div></div>
@@ -341,7 +380,7 @@ function vGastos(v) {
     h += `<button class="item" data-edit="${g.id}">
       <span class="t">${esc(g.sub || g.concepto)}${g.proveedor ? ' · ' + esc(g.proveedor) : ''}</span><span class="a num">${fmtCOP(g.valor)}</span>
       <span class="s">${esServ(v) ? (porOS ? fmtFecha(g.fecha) + ' · ' : (g.os ? 'OS ' + esc(g.os) + ' · ' : '⚠ Sin OS · ')) : ''}${esc(g.desc || g.concepto)}${g.factura ? ' · Fact. ' + esc(g.factura) : ''}${g.foto ? ' · 📷' : ''}${g.corte && corteDeGasto(g) ? ' · 🔒 Corte ' + corteDeGasto(g).n : ''}</span><span class="chip ${chipClass(e)}">${e === 'PAGADO POR SISTRONIC' ? 'SISTRONIC' : e}</span>
-    </button>`;
+    ${g.antDe ? `<span class="s ant-de" style="grid-column:1/-1">${esc(textoAntDe(g))}</span>` : ''}</button>`;
   }
   return h + '</div>';
 }
@@ -446,6 +485,7 @@ function foHTML(v) {
       ${filas.join('')}
       <tr class="total"><td colspan="7" style="text-align:right;font-weight:700">TOTAL VIÁTICOS</td><td class="r"><b>${fmtCOP(L.total)}</b></td></tr>
     </table>
+    ${(() => { const S0 = S.viajes.find(x => x.id === v.id); const ms = S0 ? movimientosAnt(S0) : []; return ms.length ? `<div class="fo-mov">${ms.map(a => `${a.mov === 'usado' ? '↪' : '↩'} ${esc(a.nota)}: <b>${fmtCOP(Math.abs(a.valor))}</b>`).join('<br>')}</div>` : ''; })()}
     <table class="sign" style="margin-top:14px"><tr><td>${S.firma ? `<img class="fo-firma" src="${S.firma}" alt="Firma">` : ''}Solicitado por</td><td>Revisado</td><td>${(() => { const r = v.revision; return r && r.estado === 'aprobado' && r.firmaAprob ? `<img class="fo-firma" src="${esc(r.firmaAprob)}" alt="Firma">` : ''; })()}Aprobado${(() => { const r = v.revision; return r && r.estado === 'aprobado' && r.aprobNombre ? `<small class="fo-aprob">${esc(r.aprobNombre)} · ${fmtFH(r.fecha).slice(0, 10)}</small>` : ''; })()}</td></tr></table>
   </div>` };
 }
@@ -457,7 +497,7 @@ const gastosCorte = (v, c) => v.gastos.filter(g => g.corte === c.id);
 const empleadoTotal = gs => sum(gs.filter(g => g.valor !== '' && g.valor != null && g.pagadoPor !== 'Sistronic'), g => g.valor);
 /* Anticipo y saldo de cada corte, en orden: el saldo de un corte pasa como anticipo al siguiente */
 function cadenaCortes(v) {
-  let disp = Number(v.anticipo) || 0; const out = [];
+  let disp = (Number(v.anticipo) || 0) + prestadoAnt(v) - recibidoAbierto(v); const out = [];
   for (const c of cortesDe(v)) {
     const anticipo = disp + (Number(c.adicional) || 0), gastado = empleadoTotal(gastosCorte(v, c));
     out.push({ c, anticipo, gastado, saldo: anticipo - gastado });
@@ -475,15 +515,15 @@ function vistaAbierta(v) {
   const cs = cortesDe(v); if (!cs.length) return v;
   const ult = cs[cs.length - 1], resto = v.gastos.filter(g => !g.corte);
   const d = parseISO(ult.hasta), sig = d ? toISO(new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1)) : v.inicio;
-  return { ...v, gastos: resto, anticipo: cadenaCortes(v).saldoFinal, inicio: sig > v.fin ? v.fin : sig, _final: true };
+  return { ...v, gastos: resto, anticipo: cadenaCortes(v).saldoFinal - prestadoAnt(v) + recibidoAbierto(v), inicio: sig > v.fin ? v.fin : sig, _final: true };
 }
 const corteDeGasto = g => { if (!g.corte) return null; for (const v of S.viajes) { const c = (v.cortes || []).find(x => x.id === g.corte); if (c) return c; } return null; };
 // Legalización enviada (pendiente) o aprobada: el viaje queda bloqueado hasta que el aprobador la devuelva
 const viajeBloqueado = v => !!(v && v.revision && (v.revision.estado === 'enviado' || v.revision.estado === 'aprobado'));
 const viajeDeGasto = g => S.viajes.find(v => v.gastos.some(x => x.id === g.id)) || (g._nuevo ? viaje() : null);
-const bloqueado = g => { const c = corteDeGasto(g); return !!(c && (!c.revision || c.revision.estado !== 'devuelto')) || viajeBloqueado(viajeDeGasto(g)); };
+const bloqueado = g => { const c = corteDeGasto(g); return !!(c && (!c.revision || c.revision.estado !== 'devuelto')) || viajeBloqueado(viajeDeGasto(g)) || !!(g.antDe && viajeBloqueado(S.viajes.find(x => x.id === g.antDe))); };
 const txtBloqueo = v => { const r = v.revision; return r.estado === 'aprobado' ? `🔒 Esta legalización fue aprobada el ${fmtFH(r.fecha).slice(0, 10)}. Ya no se puede modificar.` : `🔒 Legalización enviada el ${fmtFH(r.fecha).slice(0, 10)}. No se puede modificar hasta que el aprobador la devuelva.`; };
-const msgBloqueo = g => { const v = viajeDeGasto(g); return viajeBloqueado(v) ? (v.revision.estado === 'aprobado' ? 'La legalización ya fue aprobada: no se puede modificar' : 'La legalización está enviada: no se puede modificar hasta que la devuelvan') : 'Este gasto está en un corte enviado'; };
+const msgBloqueo = g => { const v = viajeDeGasto(g); if (!viajeBloqueado(v) && g.antDe && viajeBloqueado(S.viajes.find(x => x.id === g.antDe))) return 'Se pagó con el anticipo de ' + nomViaje(S.viajes.find(x => x.id === g.antDe)) + ', que ya se envió a aprobación: no se puede cambiar'; return viajeBloqueado(v) ? (v.revision.estado === 'aprobado' ? 'La legalización ya fue aprobada: no se puede modificar' : 'La legalización está enviada: no se puede modificar hasta que la devuelvan') : 'Este gasto está en un corte enviado'; };
 const vAvisoBloqueo = v => viajeBloqueado(v) ? `<div class="note bloqueo-aviso no-print">${txtBloqueo(v)}</div>` : '';
 const estadoCorteTxt = c => c.revision && REV[c.revision.estado] ? REV[c.revision.estado][0] : 'Sin enviar';
 function sugerirRango(v) {
@@ -1159,7 +1199,8 @@ function pintarGasto(anim) {
       <div class="hint">Estado de legalización: <span class="chip ${chipClass(e)}" id="g-estado">${e || '—'}</span></div>
       <label class="field"><span>Observaciones</span><textarea id="g-obs" rows="2">${esc(g.obs)}</textarea></label>
       <div id="g-dup"></div>
-      ${bloqueado(g) ? (viajeBloqueado(viajeDeGasto(g)) ? `<div class="note">${txtBloqueo(viajeDeGasto(g))}</div>` : `<div class="note">🔒 Este gasto está en el <b>${esc(nombreCorte(corteDeGasto(g)))}</b> (${esc(estadoCorteTxt(corteDeGasto(g)))}). Solo se puede cambiar si el aprobador devuelve el corte.</div>`)
+      ${g.antDe && !g._nuevo ? `<div class="note ok">${esc(textoAntDe(g))}</div>` : ''}
+      ${bloqueado(g) ? (!viajeBloqueado(viajeDeGasto(g)) && !corteDeGasto(g) ? `<div class="note">🔒 ${esc(msgBloqueo(g))}.</div>` : viajeBloqueado(viajeDeGasto(g)) ? `<div class="note">${txtBloqueo(viajeDeGasto(g))}</div>` : `<div class="note">🔒 Este gasto está en el <b>${esc(nombreCorte(corteDeGasto(g)))}</b> (${esc(estadoCorteTxt(corteDeGasto(g)))}). Solo se puede cambiar si el aprobador devuelve el corte.</div>`)
       : `<div class="row"><button class="btn primary" type="submit">Guardar</button>${g._nuevo ? '<button class="btn" type="submit" data-otro="1">Guardar y agregar otro</button>' : ''}</div>
       ${g._nuevo ? '' : '<div id="g-del"><button type="button" class="btn danger block" data-act="g-del">Eliminar gasto</button></div>'}`}
     </div></form></div>`;
@@ -1334,10 +1375,11 @@ async function guardarGasto(otro, forzar) {
   registrarProveedor(g, g._tercero);
   if (g.nit) { const nitG = g.nit; setTimeout(() => enriquecerProveedores(nitG).catch(() => {}), 500); }
   const limpio = { ...g }; delete limpio._nuevo; delete limpio._ia; delete limpio._iaErr; delete limpio._tercero;
+  asignarAnticipo(limpio, v);
   const i = v.gastos.findIndex(x => x.id === g.id);
   if (i >= 0) v.gastos[i] = limpio; else v.gastos.push(limpio);
-  await guardar();
-  toast(g._nuevo ? 'Gasto registrado' : 'Gasto actualizado');
+  recalcAnticipos(); await guardar();
+  toast((g._nuevo ? 'Gasto registrado' : 'Gasto actualizado') + (limpio.antDe ? '. ' + textoAntDe(limpio).replace('💳 ', '') : ''), limpio.antDe ? 4000 : 0);
   if (otro) { const base = { fecha: g.fecha, concepto: g.concepto, pagadoPor: g.pagadoPor }; abrirGasto(); Object.assign(editando, base); pintarGasto(); }
   else cerrarSheet();
   render();
@@ -1698,7 +1740,7 @@ function comprimirFoto(file) {
 
 /* ---------- Datos del viaje: se piden al crear un viaje y se avisa si faltan ---------- */
 const NV_CAMPOS = { trabajador: 'Trabajador', cedula: 'Cédula', cliente: 'Cliente', servicio: 'Proyecto / servicio', cot: 'COT', ciudad: 'Ciudad', inicio: 'Fecha de inicio', fin: 'Fecha de fin', centroCosto: 'Centro de costo' };
-function camposObligatorios(sv) { const l = sv ? ['trabajador', 'cedula', 'inicio', 'fin'] : ['trabajador', 'cedula', 'cliente', 'servicio', 'cot', 'ciudad', 'inicio', 'fin']; if (centrosCosto().length) l.push('centroCosto'); return l; }
+function camposObligatorios(sv) { const l = sv ? ['trabajador', 'cedula', 'inicio'] : ['trabajador', 'cedula', 'cliente', 'servicio', 'ciudad', 'inicio']; if (centrosCosto().length) l.push('centroCosto'); return l; }
 function faltanDatos(v, sv = esServ(v)) {
   const f = camposObligatorios(sv).filter(k => !String(v[k] || '').trim()).map(k => NV_CAMPOS[k]);
   if (v.inicio && v.fin && v.fin < v.inicio) f.push('la fecha de fin es antes del inicio');
@@ -1720,9 +1762,9 @@ function pintarFormViaje(anim) {
       <p class="hint" style="margin:0">${n.editar ? 'Complete los datos que faltan. Los campos con * son obligatorios.' : 'Llene los datos antes de registrar gastos. Los campos con * son obligatorios.'}</p>
       <div class="grid2">${f('trabajador', 'Trabajador')}${f('cedula', 'Cédula', 'text', 'inputmode="numeric"')}</div>
       ${sv ? '' : f('cliente', 'Cliente / Empresa', 'text', 'list="dl-clientes"') + f('servicio', 'Proyecto / servicio', 'text', 'list="dl-proyectos"')}
-      ${sv ? '' : `<div class="grid2">${f('cot', 'COT / Orden de compra')}${f('os', 'OS No. (opcional)')}</div>`}
+      ${sv ? '' : `<div class="grid2">${f('cot', 'COT / Orden de compra (opcional)')}${f('os', 'OS No. (opcional)')}</div>`}
       ${f('ciudad', 'Ciudad')}
-      <div class="grid2">${f('inicio', 'Fecha inicio', 'date')}${f('fin', 'Fecha fin', 'date')}</div>
+      <div class="grid2">${f('inicio', 'Fecha inicio', 'date')}${f('fin', 'Fecha fin (opcional)', 'date')}</div>
       ${centrosCosto().length ? `<label class="field"><span>Centro de costo *</span><select data-nv="centroCosto"><option value="">— Elija el centro de costo —</option>${[...new Set([...centrosCosto(), ...(n.centroCosto ? [n.centroCosto] : [])])].map(c => `<option ${c === n.centroCosto ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></label>` : ''}
       ${n.editar ? '' : `<div class="field ant-box"><span>Anticipo (opcional, puede agregar más después en Viaje)</span>
         <div class="grid2"><label class="field"><span>Valor</span><input inputmode="numeric" data-money data-nv="antValor" value="${n.antValor ? Number(n.antValor).toLocaleString('es-CO') : ''}" placeholder="$ 0"></label><label class="field"><span>Fecha</span><input type="date" data-nv="antFecha" value="${esc(n.antFecha)}"></label></div>
@@ -1918,7 +1960,7 @@ async function exportarExcel(soloGenerar, vx) {
     h1.set('B' + r, g ? serial(g.fecha) : ''); h1.set('C' + r, g ? g.concepto : ''); h1.set('D' + r, g ? g.sub : '');
     h1.set('E' + r, g ? g.proveedor : ''); h1.set('F' + r, g ? g.desc : ''); h1.set('G' + r, g ? num(g.valor) : '');
     h1.set('H' + r, g ? g.pagadoPor : ''); h1.set('I' + r, g ? g.factura : ''); h1.set('J' + r, g ? g.soporte : '');
-    h1.set('K' + r, g ? estado(g) : '', true); h1.set('L' + r, g ? acc : '', true); h1.set('M' + r, g ? (esServ(v) ? [osTxt(g), g.obs].filter(Boolean).join(' · ') : g.obs) : '');
+    h1.set('K' + r, g ? estado(g) : '', true); h1.set('L' + r, g ? acc : '', true); h1.set('M' + r, g ? [esServ(v) ? osTxt(g) : '', g.antDe ? textoAntDe(g).replace('💳 ', '') : '', g.obs].filter(Boolean).join(' · ') : '');
   }
   // Valores ya calculados (por si se abre en un visor que no recalcula)
   const I = indicadores(v);
@@ -1938,7 +1980,7 @@ async function exportarExcel(soloGenerar, vx) {
     h2.set('C11', I.sistronic); h2.set('D11', totC ? I.sistronic / totC : 0);
     h2.set('C12', I.anticipo); h2.set('C13', I.anticipo - I.gastado); h2.set('C14', I.anticipo ? I.gastado / I.anticipo : 0); h2.set('C15', I.pendiente);
     { // Detalle de anticipos del proyecto (fecha, valor y a dónde se consignó), debajo de la gráfica (filas 15 a 34)
-      const v0a = S.viajes.find(x => x.id === v.id) || v, la = anticiposDe(v0a), ta = totalesAnticipo(v0a);
+      const v0a = S.viajes.find(x => x.id === v.id) || v, la = anticiposYMov(v0a), ta = totalesAnticipo(v0a);
       if (la.length) {
         h2.set('B36', 'ANTICIPOS DEL PROYECTO', false, 26); h2.set('C36', '', false, 26); h2.set('D36', '', false, 26);
         [['B37', 'Fecha · nota'], ['C37', 'Valor COP'], ['D37', 'Consignado a']].forEach(([r, x]) => h2.set(r, x, false, 27));
@@ -1997,7 +2039,7 @@ async function exportarExcel(soloGenerar, vx) {
     const l = L.lineas[i], r = 23 + i;
     h4.set('B' + r, l ? l.d : '', true); h4.set('F' + r, l ? l.f : '', true); h4.set('G' + r, l ? l.n : '', true); h4.set('I' + r, l ? l.t : '', true);
   }
-  [['F10', v.trabajador], ['H10', v.cedula], ['B13', v.cliente], ['F13', v.cot], ['B15', v.servicio], ['F15', serial(v.inicio)], ['H15', serial(v.fin)], ['C16', v.os], ['F17', L.anticipo], ['H17', L.total], ['K42', L.aviso]].forEach(([r, x]) => h4.set(r, num(x), true));
+  [['F10', v.trabajador], ['H10', v.cedula], ['B13', v.cliente], ['F13', v.cot], ['B15', v.servicio], ['F15', serial(v.inicio)], ['H15', serial(v.fin)], ['C16', v.os], ['F17', L.anticipo], ['H17', L.total], ['K42', [L.aviso, ...movimientosAnt(S.viajes.find(x => x.id === v.id) || v).map(a => a.nota + ': ' + fmtCOP(Math.abs(a.valor)))].join(' · ')]].forEach(([r, x]) => h4.set(r, num(x), true));
   { const f = foEnc(); h4.set('I3', f.codigo); h4.set('I4', 'Versión ' + f.version); /* casilla angosta: la fecha del formato sale en la vista de la app y el PDF */ }
   h4.set('G7', num(v.consecutivo)); h4.set('F18', v.efectivo === '' || v.efectivo == null ? '' : Number(v.efectivo));
   if (SOLO_VALORES) { L.lineas.forEach((l, i) => h4.set('K' + (22 + i), l.d)); if (!L.lineas.length) h4.set('K22', ''); h4.aplanar(); }
@@ -2785,7 +2827,7 @@ function datosFicha(d) {
     tipoLeg: fin ? `Legalización final (${cortesDe(v0).length} cortes)` : k ? `Legalización parcial (${nombreCorte(k)})` : 'Legalización de viáticos',
     servicios: esServ(v0), trabajador: v0.trabajador || '', cedula: v0.cedula || '', email: correoActual(), cliente: v0.cliente || '', cot: v0.cot || '', os: v0.os || '', servicio: v0.servicio || '', ciudad: v0.ciudad || '',
     inicio: v.inicio || '', fin: v.fin || '', enviado: new Date().toISOString(), archivos: [...(d.archivos || []), ...pdfSubidos.map(p => ({ ...p, pdf: true }))], carpetaLink: d.carpetaLink || '', ruta: d.ruta || '' };
-  { const ta = totalesAnticipo(v0); base.anticipos = anticiposDe(v0).map(a => ({ fecha: a.fecha || '', valor: Number(a.valor) || 0, destino: a.destino === 'tarjeta' ? 'tarjeta' : 'empleado', nota: a.nota || '' })); base.antEmpleado = ta.empleado; base.antTarjeta = ta.tarjeta; }
+  { const ta = totalesAnticipo(v0); base.anticipos = anticiposYMov(v0).map(a => ({ fecha: a.fecha || '', valor: Number(a.valor) || 0, destino: a.destino === 'tarjeta' ? 'tarjeta' : 'empleado', nota: a.nota || '' })); base.antEmpleado = ta.empleado; base.antTarjeta = ta.tarjeta; }
   base.centro = v0.centroCosto || '';
   base.nGastos = conValor(v).length; base.nFotos = v.gastos.filter(g => g.foto).length;
   base.sistronic = sum(conValor(v).filter(g => g.pagadoPor === 'Sistronic'), g => g.valor);
@@ -2980,7 +3022,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '62 (27/11/2026)';
+const APP_VERSION = '63 (27/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
@@ -3955,7 +3997,9 @@ document.addEventListener('click', async e => {
     case 'del-trip-no': render(); break;
     case 'del-trip-ok': if (viajeBloqueado(viaje())) break; {
       const v = viaje(); for (const g of v.gastos) if (g.foto) await DB.del('foto:' + g.id);
+      if (S.viajes.some(x => x.gastos.some(g => g.antDe === v.id && viajeBloqueado(x)))) { toast('Su anticipo cubrió gastos de una legalización ya enviada: no se puede eliminar'); break; }
       S.viajes = S.viajes.filter(x => x.id !== v.id);
+      for (const x of S.viajes) for (const g of x.gastos) if (g.antDe === v.id) { delete g.antDe; delete g.antMonto; }
       if (!S.viajes.length) S.viajes.push(nuevoViaje());
       S.activo = S.viajes[0].id; await guardar(); tab = 'gastos'; render(); toast('Viaje eliminado'); break;
     }

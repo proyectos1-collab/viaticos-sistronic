@@ -436,3 +436,15 @@ input[readonly] { background: var(--surface-2); color: var(--muted); }
 .tipo-fijo small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; margin-top: 2px; }
 .note.bloqueo-aviso { margin-bottom: 12px; background: var(--surface-2); color: var(--fg); border: 1px solid var(--line); }
 input:disabled, select:disabled { opacity: .7; }
+/* Traslados y total general (v63) */
+.ant-tras { background: var(--surface-2); }
+.ant-tras.salida b.num { color: var(--red); }
+.tot-gen { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 12px; }
+.tg-t { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.tg-n { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 6px; }
+.tg-n small { display: block; font-size: 11px; color: var(--muted); }
+.tg-n b { font-size: 15px; overflow-wrap: anywhere; }
+.tg-n .neg b { color: var(--red); }
+.item .ant-de { color: var(--green); white-space: normal; }
+.fo-mov { margin-top: 8px; font-size: 12px; padding: 8px 10px; border: 1px dashed var(--line); border-radius: 8px; }
+.ant-tras.recibido b.num { color: var(--green); }
