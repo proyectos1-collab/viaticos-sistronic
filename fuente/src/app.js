@@ -2178,7 +2178,7 @@ function instalarGoogleWeb() {
     calentar() { if (GW.ls('email') && GOOGLE_CLIENT_ID && !GW.valido()) GW.pedir().catch(() => {}); },
     login() {
       GW.pedir(true).then(() => GW.perfilLeer()).then(async u => {
-        if (!(await correoPermitido(u.email))) { const e = u.email; Android.logoutSilencioso(); throw new Error(`La cuenta ${e} no tiene acceso. ${textoAcceso()}`); }
+        if (!(await correoPermitido(u.email, true))) { const e = u.email; Android.logoutSilencioso(); throw new Error(`La cuenta ${e} no tiene acceso. ${textoAcceso()}`); }
         return u;
       }).then(u => window.onLoginOk && onLoginOk(u.email || ''))
         .catch(e => window.onLoginError && onLoginError(err(e), e && e.config ? 'config' : ''));
@@ -2855,7 +2855,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '57 (27/11/2026)';
+const APP_VERSION = '58 (27/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
@@ -2913,6 +2913,7 @@ function vConfig() {
     <h2>Conceptos de gasto</h2>
     <div class="card form"><div class="row"><button class="btn" data-act="cp-abrir">Administrar conceptos y subconceptos</button></div></div>
     ${vAprobadoresCfg()}
+    ${vExternosCfg()}
     <h2>Firma para la legalización</h2>
     <div class="card form" id="firma-cfg">${vFirmaCfg()}</div>
     <h2>Facturas repetidas</h2>
@@ -2990,14 +2991,88 @@ window.onFoldersError = (msg, id) => {
 const DOMINIOS_PERMITIDOS = ['sistronic.com.co'];
 const EXCEPCIONES_SHA = ['5d771deaa52eeeec61b4deafafb5f5491ef6fc2ff4f995258a3ed333c62e86f5'];
 const sha256Hex = async t => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))).map(b => b.toString(16).padStart(2, '0')).join('');
-async function correoPermitido(email) {
+// enLinea: verificar contra la lista del administrador en Drive (al iniciar sesión). Sin eso se usa lo último verificado en este equipo.
+async function correoPermitido(email, enLinea) {
   const e = String(email || '').trim().toLowerCase();
   if (!DOMINIOS_PERMITIDOS.length) return true;
   if (!e) return false;
   if (DOMINIOS_PERMITIDOS.some(d => e.endsWith('@' + d))) return true;
-  return EXCEPCIONES_SHA.includes(await sha256Hex(e));
+  if (EXCEPCIONES_SHA.includes(await sha256Hex(e))) return true;
+  if (enLinea) { const r = await externoAutorizado(e); if (r !== null) return r; }
+  try { return localStorage.getItem('acceso:ext:' + e) === '1'; } catch { return false; }
 }
-const textoAcceso = () => DOMINIOS_PERMITIDOS.length ? `Esta app es solo para el personal de Sistronic: entre con su correo ${DOMINIOS_PERMITIDOS.map(d => '@' + d).join(' o ')}.` : '';
+/* Correos externos autorizados por el administrador: archivo JSON en el Drive de proyectos1, compartido solo con cada correo autorizado */
+const Q_EXT = "appProperties has { key='viaticosAccesos' and value='1' } and trashed = false";
+const EXT_NOMBRE = 'Correos externos autorizados (viáticos).json';
+let EXT = null, extEstado = null;
+const marcarExterno = (e, ok) => { try { ok ? localStorage.setItem('acceso:ext:' + e, '1') : localStorage.removeItem('acceso:ext:' + e); } catch {} };
+// true / false si se pudo verificar; null si no hubo forma (sin internet o sin sesión)
+async function externoAutorizado(e) {
+  try {
+    const fs = ((await GW.api('GET', `${DRIVE}?corpora=user&pageSize=20&orderBy=modifiedTime desc&fields=files(id,owners(emailAddress))&q=${encodeURIComponent(Q_EXT)}`)).files || [])
+      .filter(f => (f.owners || []).some(o => String(o.emailAddress || '').toLowerCase() === ADMIN_CORREO));
+    let ok = false;
+    for (const f of fs) { const d = await GW.api('GET', `${DRIVE}/${f.id}?alt=media`); if (Array.isArray(d.externos) && d.externos.map(x => String(x).toLowerCase()).includes(e)) { ok = true; break; } }
+    marcarExterno(e, ok); return ok;
+  } catch (err) { return err && err.status ? false : null; }
+}
+// Al abrir la app con una cuenta externa: se vuelve a verificar en línea; si ya no está autorizada, se cierra la sesión
+async function reverificarExterno() {
+  const e = correoActual(); if (!e || !GW.valido() || DOMINIOS_PERMITIDOS.some(d => e.endsWith('@' + d)) || EXCEPCIONES_SHA.includes(await sha256Hex(e))) return;
+  const r = await externoAutorizado(e);
+  if (r === false) { Android.logoutSilencioso(); loginEstado = { cargando: false, msg: `La cuenta ${e} ya no tiene acceso. ${textoAcceso()}`, config: false }; try { pintarLogin(); } catch {} render(); }
+}
+const listaExt = () => { if (!EXT) { try { EXT = JSON.parse(localStorage.getItem('ext:lista') || 'null'); } catch {} if (!Array.isArray(EXT)) EXT = []; } return EXT; };
+const limpiarExt = l => [...new Set((l || []).map(c => String(c).trim().toLowerCase()).filter(c => correoValido(c) && !DOMINIOS_PERMITIDOS.some(d => c.endsWith('@' + d))))].slice(0, 100);
+async function cargarExternosAdmin() {
+  if (!esAdminPrincipal() || !GW.valido()) return;
+  try {
+    const fs = (await GW.api('GET', `${DRIVE}?fields=files(id)&q=${encodeURIComponent(Q_EXT + " and 'me' in owners")}`)).files || [];
+    if (!fs.length) return;
+    const d = await GW.api('GET', `${DRIVE}/${fs[0].id}?alt=media`);
+    if (Array.isArray(d.externos)) { EXT = limpiarExt(d.externos); try { localStorage.setItem('ext:lista', JSON.stringify(EXT)); } catch {} if (tab === 'config') render(); }
+  } catch {}
+}
+async function guardarExternos(lista) {
+  if (!esAdminPrincipal()) return;
+  const nueva = limpiarExt(lista), viejos = listaExt(), nuevos = nueva.filter(c => !viejos.includes(c)), quitados = viejos.filter(c => !nueva.includes(c));
+  extEstado = { estado: 'guardando' }; render();
+  try {
+    const ex = (await GW.api('GET', `${DRIVE}?fields=files(id)&q=${encodeURIComponent(Q_EXT + " and 'me' in owners")}`)).files || [];
+    const datos = { externos: nueva, admin: ADMIN_CORREO, actualizado: new Date().toISOString() };
+    const b = 'ext' + Date.now(), meta = ex[0] ? { name: EXT_NOMBRE } : { name: EXT_NOMBRE, appProperties: { viaticosAccesos: '1' }, parents: [await GW.carpeta(FICHAS_CARPETA, 'root')] };
+    const body = new Blob([`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: application/json\r\n\r\n`, JSON.stringify(datos), `\r\n--${b}--`]);
+    const r = await GW.api(ex[0] ? 'PATCH' : 'POST', `https://www.googleapis.com/upload/drive/v3/files${ex[0] ? '/' + ex[0].id : ''}?uploadType=multipart&fields=id`, body, 'multipart/related; boundary=' + b);
+    const fallos = [];
+    for (const c of nueva) if (!(await permiso(r.id, { role: 'reader', type: 'user', emailAddress: c }))) fallos.push(c);
+    if (quitados.length) {
+      const ps = (await GW.api('GET', `${DRIVE}/${r.id}/permissions?supportsAllDrives=true&fields=permissions(id,emailAddress,role)`)).permissions || [];
+      for (const p of ps) if (p.role !== 'owner' && quitados.includes(String(p.emailAddress || '').toLowerCase())) await GW.api('DELETE', `${DRIVE}/${r.id}/permissions/${p.id}?supportsAllDrives=true`).catch(() => {});
+    }
+    EXT = nueva; try { localStorage.setItem('ext:lista', JSON.stringify(EXT)); } catch {}
+    extEstado = { estado: 'ok', nuevos: nuevos.length, quitados: quitados.length, fallos };
+    toast('Correos autorizados guardados');
+  } catch (e) { extEstado = { estado: 'error', msg: e.message || 'No se pudo guardar' }; }
+  render();
+}
+function vExternosCfg() {
+  if (!esAdminPrincipal()) return '';
+  const l = listaExt(), e = extEstado, ocup = e && e.estado === 'guardando';
+  return `<h2>Correos externos autorizados</h2>
+  <div class="card form">
+    <p class="hint" style="margin:0">Las cuentas <b>@${DOMINIOS_PERMITIDOS.join(', @')}</b> entran siempre. Aquí autoriza correos de afuera (por ejemplo, un contratista con Gmail).</p>
+    <div class="aprob-list">
+      ${l.map(c => `<div class="aprob-row"><span>🔓 ${esc(c)}</span><button class="btn danger" data-act="ext-quitar" data-c="${esc(c)}" ${ocup ? 'disabled' : ''}>Quitar</button></div>`).join('')}
+      ${l.length ? '' : '<div class="note" style="margin:0">No hay correos externos autorizados.</div>'}
+    </div>
+    <div class="row" style="flex-wrap:nowrap"><input id="ext-nuevo" type="email" inputmode="email" autocapitalize="off" placeholder="correo@gmail.com" style="flex:1;min-width:0"><button class="btn primary" data-act="ext-agregar" style="flex:0 0 auto" ${ocup ? 'disabled' : ''}>Autorizar</button></div>
+    ${!e ? '' : ocup ? '<div class="note ia-busy"><span class="spin"></span> <span class="txt">Guardando…</span></div>'
+      : e.estado === 'ok' ? `<div class="note ok">✔ Guardado.${e.quitados ? ' Los correos quitados pierden el acceso la próxima vez que abran la app con internet.' : ''}${e.fallos && e.fallos.length ? `<br>⚠ Google no dejó compartir con ${esc(e.fallos.join(', '))}. Revise que el correo sea una cuenta de Google.` : ''}</div>`
+      : `<div class="note">⚠ ${esc(e.msg)}</div>`}
+    <p class="hint" style="margin:0">Si Google le muestra a esa persona "acceso bloqueado", hay que agregar el correo como usuario de prueba en Google Cloud (pantalla de consentimiento OAuth).</p>
+  </div>`;
+}
+const textoAcceso = () => DOMINIOS_PERMITIDOS.length ? `Esta app es solo para el personal de Sistronic: entre con su correo ${DOMINIOS_PERMITIDOS.map(d => '@' + d).join(' o ')} o pida al administrador que autorice su correo.` : '';
 let loginEstado = { cargando: false, msg: '', config: false };
 function pintarLogin() {
   let el = $('#login');
@@ -3013,7 +3088,7 @@ function pintarLogin() {
     <p class="hint">Sus gastos se guardan en este equipo y en una carpeta privada de la app en su Google Drive, para verlos desde cualquier equipo con la misma cuenta.</p>
   </div>`;
 }
-window.onLoginOk = email => { programarSync(300); leerModoAdmin(); if (esAdmin()) admCargar(); setTimeout(cargarAprobadores, 1500); setTimeout(() => revisarFichas(true), 4000); loginEstado = { cargando: false, msg: '', config: false }; const p = perfil(); toast('Bienvenido, ' + (p ? p.corto : email)); pintarLogin(); render(); };
+window.onLoginOk = email => { programarSync(300); leerModoAdmin(); if (esAdmin()) admCargar(); setTimeout(cargarAprobadores, 1500); setTimeout(cargarExternosAdmin, 2000); setTimeout(() => revisarFichas(true), 4000); loginEstado = { cargando: false, msg: '', config: false }; const p = perfil(); toast('Bienvenido, ' + (p ? p.corto : email)); pintarLogin(); render(); };
 window.onLoginError = (msg, config) => { loginEstado = { cargando: false, msg, config: config === 'config' }; pintarLogin(); };
 window.onLogout = () => { pintarLogin(); render(); };
 
@@ -3332,6 +3407,8 @@ document.addEventListener('click', async e => {
     case 'drive-xlsx': if (cortesDe(viaje()).length) enviarFinalCortes(); else subirDrive('xlsx'); break;
     case 'cortes-resumen': try { await excelResumenCortes(viaje()); } catch (err) { toast('No se pudo exportar: ' + err.message); } break;
     case 'drive-backup': subirDrive('backup'); break;
+    case 'ext-agregar': { const c = ($('#ext-nuevo')?.value || '').trim().toLowerCase(); if (!correoValido(c)) { toast('Escriba un correo válido'); break; } if (DOMINIOS_PERMITIDOS.some(d => c.endsWith('@' + d))) { toast('Los correos @' + DOMINIOS_PERMITIDOS[0] + ' ya entran sin autorización'); break; } if (listaExt().includes(c)) { toast('Ese correo ya está autorizado'); break; } guardarExternos([...listaExt(), c]); break; }
+    case 'ext-quitar': guardarExternos(listaExt().filter(c => c !== t.dataset.c)); break;
     case 'aprob-agregar': { const c = ($('#aprob-nuevo')?.value || '').trim().toLowerCase(); if (!correoValido(c)) { toast('Escriba un correo válido'); break; } if (c === ADMIN_CORREO || listaAprob().includes(c)) { toast('Ese correo ya aprueba'); break; } guardarAprobadores([...listaAprob(), c]); break; }
     case 'aprob-quitar': guardarAprobadores(listaAprob().filter(c => c !== t.dataset.c)); break;
     case 'ant-agregar': { const v = viaje(); anticiposDe(v).push({ id: uid(), fecha: todayISO(), valor: 0, destino: 'empleado', nota: '' }); antQuitando = ''; await guardar(); const y = window.scrollY; render(); window.scrollTo(0, y); const ins = document.querySelectorAll('[data-ant="valor"]'); if (ins.length) { ins[ins.length - 1].focus(); ins[ins.length - 1].select(); } break; }
@@ -3503,7 +3580,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#sheet'
   render();
   // Guía de la clave de IA: no depende de que la sincronización termine (puede quedar esperando un toque)
   leerModoAdmin(); if (esAdmin()) setTimeout(admCargar, 1500);
-  setTimeout(cargarAprobadores, 2000); setInterval(() => { if (document.visibilityState === 'visible') cargarAprobadores(); }, 600000);
+  setTimeout(cargarAprobadores, 2000); setTimeout(() => { reverificarExterno(); cargarExternosAdmin(); }, 3000); setInterval(() => { if (document.visibilityState === 'visible') cargarAprobadores(); }, 600000);
   // Enlace desde la app de Órdenes de servicio (?os=3201&cliente=Abbott&cot=34-2): abre "Registrar gasto" con la OS ya puesta
   try {
     const q = new URLSearchParams(location.search), osQ = (q.get('os') || '').trim().replace(/^os\s*/i, '').trim().slice(0, 20);
