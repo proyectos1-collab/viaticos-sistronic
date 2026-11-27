@@ -274,6 +274,7 @@ function activarAtrasOS() {
     if (scan) { const b = scan.querySelector('[data-s="volver"]:not([hidden])') || scan.querySelector('[data-s="cancelar"]'); if (b) b.click(); reponer(); return; }
     if (guia) { const b = guia.querySelector('[data-g="luego"]'); if (b) b.click(); else guia.remove(); reponer(); return; }
     if ($('#sheet').innerHTML) { cerrarSheet(); reponer(); return; }
+    if (tab === 'admin' || (tab === 'conceptos' && esAdminPrincipal())) { tab = 'config'; render(); reponer(); return; }
     if (tab === 'config' || tab === 'conceptos') { tab = 'gastos'; cfgAbierta = false; render(); reponer(); return; }
     volverAOS();
   });
@@ -299,7 +300,7 @@ function render() {
   $('#tabs').innerHTML = TABS.map(([k, l, i]) => `<button role="tab" aria-selected="${tab === k}" data-tab="${k}">${i}<span>${l}</span></button>`).join('');
   $('#fab').hidden = !(tab === 'gastos' || tab === 'facturas');
   const main = $('#main');
-  main.innerHTML = vVolverOS() + `<div id="sync-chip">${syncChipHTML()}</div>` + (tab === 'config' || tab === 'conceptos' ? '' : vAdmSwitch()) + ({ gastos: vGastos, resumen: vResumen, facturas: vFacturas, legal: vLegal, viaje: vViaje, config: vConfig, conceptos: vConceptos })[tab](v);
+  main.innerHTML = vVolverOS() + `<div id="sync-chip">${syncChipHTML()}</div>` + (tab === 'config' || tab === 'conceptos' || tab === 'admin' ? '' : vAdmSwitch()) + ({ gastos: vGastos, resumen: vResumen, facturas: vFacturas, legal: vLegal, viaje: vViaje, config: vConfig, conceptos: vConceptos, admin: vAdmin })[tab](v);
   pintarAvatar();
   main.focus({ preventScroll: true });
 }
@@ -308,7 +309,7 @@ function vGastos(v) {
   const I = indicadores(v);
   const pct = Math.min(100, Math.max(0, I.ejecutado * 100));
   const nDup = gruposDuplicados().filter(gr => gr.some(x => x.v.id === v.id)).length;
-  let h = `${nDup ? `<div class="note dup" style="margin-bottom:12px">⛔ <b>${nDup === 1 ? 'Hay una factura registrada más de una vez' : `Hay ${nDup} facturas registradas más de una vez`}</b> en este viaje.<div class="row" style="margin-top:8px"><button class="btn dup-btn" data-act="dup-abrir">Revisar y eliminar repetidas</button></div></div>` : ''}<h2>Control de gastos</h2>
+  let h = `${vRecordatorio()}${nDup ? `<div class="note dup" style="margin-bottom:12px">⛔ <b>${nDup === 1 ? 'Hay una factura registrada más de una vez' : `Hay ${nDup} facturas registradas más de una vez`}</b> en este viaje.<div class="row" style="margin-top:8px"><button class="btn dup-btn" data-act="dup-abrir">Revisar y eliminar repetidas</button></div></div>` : ''}<h2>Control de gastos</h2>
   <div class="kpis">
     <div class="kpi hero ${I.saldo < 0 ? 'neg' : ''}"><div><div class="l">Saldo disponible</div><div class="v num">${fmtCOP(I.saldo)}</div></div>
       <div style="text-align:right"><div class="l">Anticipo</div><div class="num" style="font-weight:700">${fmtCOP(I.anticipo)}</div></div>
@@ -424,8 +425,8 @@ function foHTML(v) {
     filas.push(l ? `<tr><td colspan="4">${esc(l.d)}</td><td>${esc(l.f)}</td><td class="r">${l.n}</td><td class="r"></td><td class="r">${fmtCOP(l.t)}</td></tr>` : '<tr><td colspan="4">&nbsp;</td><td></td><td></td><td></td><td></td></tr>');
   }
   return { L, html: `<div class="fo">
-    <table class="head"><tr><td rowspan="3" style="width:150px;text-align:center"><img src="${LOGO}" alt="Logo" style="max-height:52px"></td><td rowspan="3" class="title">Legalización de Viáticos</td><td style="width:110px">Página 1/1</td></tr>
-      <tr><td>FO-AD-03</td></tr><tr><td>Versión 3</td></tr></table>
+    <table class="head"><tr><td rowspan="3" style="width:150px;text-align:center"><img src="${logoEmp()}" alt="Logo" style="max-height:52px;max-width:140px"></td><td rowspan="3" class="title">Legalización de Viáticos</td><td style="width:110px">Página 1/1</td></tr>
+      <tr><td>${esc(foEnc().codigo)}</td></tr><tr><td>Versión ${esc(foEnc().version)}${foEnc().fecha ? '<br><small>' + fmtFecha(foEnc().fecha) + '</small>' : ''}</td></tr></table>
     <table style="margin-top:8px"><tr><td class="lbl" style="width:70%;text-align:right">Consecutivo</td><td>${esc(v.consecutivo)}</td></tr></table>
     <table style="margin-top:8px">
       <tr><td class="lbl">Lugar</td><td class="lbl">Fecha legalización</td><td class="lbl">Colaborador</td><td class="lbl">Cédula</td></tr>
@@ -436,6 +437,7 @@ function foHTML(v) {
       <tr><td colspan="2">${esc(v.servicio)}</td><td>${fmtFecha(v.inicio)}</td><td>${fmtFecha(v.fin)}</td></tr>
       <tr><td class="lbl">OS No.</td><td>${esc(v.os)}</td><td class="lbl">Total anticipos</td><td class="lbl">Total viáticos</td></tr>
       <tr><td class="lbl">Efectivo</td><td>${v.efectivo !== '' && v.efectivo != null ? fmtCOP(v.efectivo) : ''}</td><td class="r">${fmtCOP(L.anticipo)}</td><td class="r"><b>${fmtCOP(L.total)}</b></td></tr>
+      ${v.centroCosto ? `<tr><td class="lbl">Centro de costo</td><td colspan="3">${esc(v.centroCosto)}</td></tr>` : ''}
     </table>
     <table style="margin-top:10px">
       <tr><th colspan="8" style="text-align:center">Relación de gastos</th></tr>
@@ -675,8 +677,22 @@ const cpCfg = c => { S.conceptosCfg = S.conceptosCfg || {}; const d = CP_DEF[c] 
 const cpIcono = c => cpCfg(c).icono;
 const usoConcepto = (c, sub) => { let n = 0; for (const v of S.viajes) for (const g of v.gastos) if (g.concepto === c && (sub == null || g.sub === sub)) n++; return n; };
 let cpBuscar = '', cpAgregando = null, cpEdit = null;
+function vConceptosFijos() {
+  return `<div class="row" style="margin:0 0 6px"><button class="btn" data-act="cp-volver">‹ Configuración</button></div>
+  <h2>Conceptos de gasto</h2>
+  <div class="note" style="margin-bottom:12px">🔒 La lista de conceptos la define el administrador para todos. Si necesita uno nuevo, pídaselo.</div>
+  ${Object.entries(S.listas).map(([c, x]) => { const k = cpCfg(c); return `<div class="cp-card"><div class="cp-head"><span class="cp-ic" style="background:${k.color}1f;color:${k.color}">${k.icono}</span><span class="cp-t"><b>${esc(c)}</b><small>${x.length} subconcepto${x.length === 1 ? '' : 's'}</small></span></div><div class="cp-subs">${x.map(y => `<span class="cp-chip">${esc(y)}</span>`).join('')}</div></div>`; }).join('')}`;
+}
+const cpPublicados = () => { const c = central().conceptos; return !!c && JSON.stringify([c.listas, c.cfg || {}, c.off || {}]) === JSON.stringify([S.listas, S.conceptosCfg || {}, S.conceptosOff || {}]); };
+function vCpPublicar() {
+  if (!esAdminPrincipal()) return '';
+  const ok = cpPublicados(), ocup = admEstado && admEstado.estado === 'guardando';
+  return `<div class="card form cp-pub ${ok ? 'ok' : ''}"><div>${ok ? '✔ Esta es la lista que usan todos' : central().conceptos ? '✏️ Tiene cambios que los demás todavía no ven' : '📢 Por ahora cada persona usa su propia lista'}</div>
+    <button class="btn ${ok ? '' : 'primary'}" data-act="cp-publicar" ${ok || ocup ? 'disabled' : ''}>Publicar para todos</button>${central().conceptos ? '<button class="btn" data-act="cp-despublicar" ' + (ocup ? 'disabled' : '') + '>Dejar que cada uno use la suya</button>' : ''}${vAdmEstado()}</div>`;
+}
 function vConceptos() {
   if (!cfgAbierta) { tab = 'gastos'; return vGastos(viaje()); }
+  if (conceptosFijos()) return vConceptosFijos();
   const q = normFact(cpBuscar), off = S.conceptosOff || {};
   const coincide = (c, subs) => !q || normFact(c).includes(q) || subs.some(x => normFact(x).includes(q));
   const tarjeta = (c, subs, activo) => {
@@ -690,7 +706,7 @@ function vConceptos() {
   };
   const act = Object.entries(S.listas).filter(([c, x]) => coincide(c, x)), ina = Object.entries(off).filter(([c, x]) => coincide(c, x));
   return `<div class="row" style="margin:0 0 6px"><button class="btn" data-act="cp-volver">‹ Configuración</button></div>
-  <h2>Conceptos de gasto</h2>
+  <h2>Conceptos de gasto</h2>${vCpPublicar()}
   <div class="cp-bar"><input id="cp-buscar" placeholder="Buscar concepto o subconcepto…" value="${esc(cpBuscar)}" autocomplete="off"><button class="btn primary" data-act="cp-nuevo">+ Concepto</button></div>
   ${act.map(([c, x]) => tarjeta(c, x, true)).join('') || '<div class="empty">No hay conceptos que coincidan.</div>'}
   ${ina.length ? `<h2>Desactivados <span style="text-transform:none;letter-spacing:0;font-weight:500">· no salen al registrar, los gastos viejos los conservan</span></h2>${ina.map(([c, x]) => tarjeta(c, x, false)).join('')}` : ''}
@@ -764,8 +780,9 @@ function vViaje(v) {
       ${sv ? '<p class="hint" style="margin:4px 0 0">Varias órdenes de servicio en una sola legalización: cada gasto lleva su OS y su cliente.</p>' : ''}</div>
     ${f('trabajador', 'Trabajador')}
     <div class="grid2">${f('cedula', 'Cédula', 'text', 'inputmode="numeric"')}${f('ciudad', 'Ciudad')}</div>
-    ${f('cliente', sv ? 'Cliente (general)' : 'Cliente / Empresa')}
-    ${f('servicio', sv ? 'Descripción' : 'Servicio / Proyecto')}
+    ${f('cliente', sv ? 'Cliente (general)' : 'Cliente / Empresa', 'text', 'list="dl-clientes" autocomplete="off"')}
+    ${f('servicio', sv ? 'Descripción' : 'Servicio / Proyecto', 'text', 'list="dl-proyectos" autocomplete="off"')}${vListasSug()}
+    ${centrosCosto().length || v.centroCosto ? `<label class="field"><span>Centro de costo</span><select data-vf="centroCosto"><option value="">— Elija el centro de costo —</option>${[...new Set([...centrosCosto(), ...(v.centroCosto ? [v.centroCosto] : [])])].map(c => `<option ${c === v.centroCosto ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></label>` : ''}
     <div class="grid2">${sv ? f('cot', 'COT / Orden de compra', 'text', 'readonly') + f('os', 'OS No.', 'text', 'readonly') : f('cot', 'COT / Orden de compra') + f('os', 'OS No.')}</div>
     ${sv ? vOSResumen(v) : ''}
     <div class="grid2">${f('inicio', 'Fecha inicio', 'date')}${f('fin', 'Fecha fin', 'date')}</div>
@@ -783,7 +800,7 @@ function vViaje(v) {
   <h2>Viajes</h2>
   <div class="row"><button class="btn" data-act="trips">Cambiar de viaje / nuevo viaje</button></div>
   <h2>Conceptos de gasto</h2>
-  <div class="card form"><p class="hint" style="margin:0">${Object.keys(S.listas).map(c => cpIcono(c) + ' ' + esc(c)).join(' · ')}</p><div class="row"><button class="btn" data-act="cp-abrir">Administrar conceptos</button></div></div>
+  <div class="card form"><p class="hint" style="margin:0">${Object.keys(S.listas).map(c => cpIcono(c) + ' ' + esc(c)).join(' · ')}</p><div class="row"><button class="btn" data-act="cp-abrir">${conceptosFijos() ? 'Ver conceptos' : 'Administrar conceptos'}</button></div></div>
   <h2>Zona de cuidado</h2>
   <div class="card form" id="danger"><button class="btn danger" data-act="del-trip">Eliminar este viaje</button></div>`;
 }
@@ -857,7 +874,7 @@ async function leerFacturaIA(dataUrl, textoPDF) {
   const subs = conceptos.map(c => `${c}: ${S.listas[c].join(', ')}`).join('\n');
   const prompt = `Eres un asistente contable en Colombia. Lee la factura, recibo o comprobante de la imagen y devuelve SOLO un JSON con:
 - proveedor: nombre comercial del establecimiento o empresa que emite el documento (ej. "Rappi", "Hotel Casa Rueda", "Uber").
-  El proveedor es SIEMPRE quien VENDE y emite la factura, NUNCA el cliente/comprador. El comprador casi siempre es la empresa del trabajador: SISTRONIC (razón social SISTEMAS ELECTRONICOS S.A.S.)${soloDig((S.empresa || {}).nit) ? ', NIT ' + soloDig((S.empresa || {}).nit) : ''}; si ve ese nombre o ese NIT, es el CLIENTE, no el proveedor. En facturas electrónicas el emisor está en el encabezado (logo, su NIT, resolución DIAN, "Responsable de IVA") y el cliente aparece como "Cliente", "Señor(es)", "Adquiriente", "Facturar a" o "Comprador".
+  El proveedor es SIEMPRE quien VENDE y emite la factura, NUNCA el cliente/comprador. El comprador casi siempre es la empresa del trabajador: SISTRONIC (razón social ${empresaCfg().razon || 'SISTEMAS ELECTRONICOS S.A.S.'})${soloDig(empresaCfg().nit) ? ', NIT ' + soloDig(empresaCfg().nit) : ''}; si ve ese nombre o ese NIT, es el CLIENTE, no el proveedor. En facturas electrónicas el emisor está en el encabezado (logo, su NIT, resolución DIAN, "Responsable de IVA") y el cliente aparece como "Cliente", "Señor(es)", "Adquiriente", "Facturar a" o "Comprador".
   Si el nombre NO está escrito como texto y solo aparece en el LOGO (imagen, marca o dibujo), identifique la empresa por su logo (ej. el logo de Rappi, Crepes & Waffles, Éxito, D1, Terpel, Uber, Avianca). Si hay NIT, el proveedor debe corresponder a ese NIT.
 - nit: NIT o documento del proveedor si aparece, si no "".
 - fecha: fecha del documento en formato AAAA-MM-DD, si no aparece "".
@@ -940,7 +957,7 @@ function normalizarIA(d) {
     subtotal: num(d.subtotal), ivaPct: pct(d.iva_porcentaje), iva: num(d.iva_valor), incPct: pct(d.inc_porcentaje), inc: num(d.inc_valor), propina: num(d.propina), descuento: num(d.descuento),
     formaPago: una(d.forma_pago, FORMAS_PAGO), medioPago: una(d.medio_pago, MEDIOS_PAGO) };
   // Si la IA confundió al comprador (Sistronic) con el proveedor, se descarta ese dato
-  const emp = soloDig((S.empresa || {}).nit), cNom = normFact(d.comprador_nombre), cNit = soloDig(d.comprador_nit);
+  const emp = soloDig(empresaCfg().nit), cNom = normFact(d.comprador_nombre), cNit = soloDig(d.comprador_nit);
   const nomComprador = x => { const n = normFact(x); return !!n && (/sistronic|sistemaselectronicos/.test(n) || (cNom.length > 3 && n === cNom)); };
   const nitComprador = x => { const n = soloDig(x); return !!n && ((emp && n.slice(0, emp.length) === emp) || (cNit.length > 5 && n.slice(0, 9) === cNit.slice(0, 9))); };
   if (nomComprador(out.proveedor)) out.proveedor = '';
@@ -1082,8 +1099,8 @@ function vCampoOS(g, v) {
   const rec = osDelViaje(v).filter(([o]) => o !== g.os).slice(0, 8);
   return `<div class="grid2 os-campos">
       <label class="field"><span>Orden de servicio (OS) *</span><input id="g-os" inputmode="text" autocomplete="off" value="${esc(g.os || '')}" placeholder="Ej. 3201"></label>
-      <label class="field"><span>Cliente de la OS</span><input id="g-oscli" autocomplete="off" value="${esc(g.osCliente || '')}" placeholder="Ej. Abbott"></label>
-    </div>
+      <label class="field"><span>Cliente de la OS</span><input id="g-oscli" autocomplete="off" list="dl-clientes" value="${esc(g.osCliente || '')}" placeholder="Ej. Abbott"></label>
+    </div>${vListasSug()}
     ${rec.length ? `<div class="os-chips">${rec.map(([o, c]) => `<button type="button" class="cp-chip" data-act="os-chip" data-os="${esc(o)}" data-cli="${esc(c)}">OS ${esc(o)}${c ? ' · ' + esc(c) : ''}</button>`).join('')}</div>` : ''}`;
 }
 function pintarGasto(anim) {
@@ -1163,7 +1180,7 @@ function nitAviso(g) {
   return out.length ? `<div class="note">${out.join('<br>')}</div>` : '';
 }
 function avisoComprador(g) {
-  const emp = soloDig((S.empresa || {}).nit), cn = soloDig(g.compradorNit), nom = (g.compradorNombre || '').toLowerCase();
+  const emp = soloDig(empresaCfg().nit), cn = soloDig(g.compradorNit), nom = (g.compradorNombre || '').toLowerCase();
   if (!cn && !nom) return '';
   if (/consumidor\s*final/.test(nom) || /^2{6,}$/.test(cn)) return `<div class="note">⚠ La factura está a nombre de <b>Consumidor final</b>, no de Sistronic.</div>`;
   if (emp && cn && cn.slice(0, emp.length) !== emp) return `<div class="note">⚠ La factura está a nombre de otro comprador (NIT ${esc(cn)}), no de Sistronic.</div>`;
@@ -1803,6 +1820,7 @@ async function exportarExcel(soloGenerar, vx) {
   if (!resp.ok) throw new Error('No se encontró la plantilla de Excel');
   const zip = await JSZip.loadAsync(await resp.arrayBuffer());
   const v0 = viaje(), v = vx || vistaAbierta(v0);
+  if (empCentral().logo && zip.file('xl/media/image1.tmp')) { try { zip.file('xl/media/image1.tmp', await logoExcelPNG(empCentral().logo)); } catch (e) { console.error(e); } }
   const FILAS = 499; // tblGastos va de la fila 14 a la 512
   if (v.gastos.length > FILAS) toast(`Solo caben ${FILAS} gastos en la plantilla; se exportan los primeros ${FILAS}`);
 
@@ -1817,7 +1835,8 @@ async function exportarExcel(soloGenerar, vx) {
     h1.set('H4', v._corte || v._final ? 'Anticipo de este corte:' : 'Total anticipos:', false, 3);
     h1.set('H6', pr ? 'Cuenta (proyecto):' : 'Cuenta empleado:', false, 3); h1.set('I6', ta.empleado, false, 189); h1.set('J6', '', false, 187);
     h1.set('H7', pr ? 'Tarjeta (proyecto):' : 'Tarjeta ingeniería:', false, 3); h1.set('I7', ta.tarjeta, false, 189); h1.set('J7', '', false, 187);
-    if (pr) { h1.set('H8', 'Total (proyecto):', false, 3); h1.set('I8', ta.total, false, 189); h1.set('J8', '', false, 187); }
+    if (v.centroCosto) { h1.set('H8', 'Centro de costo:', false, 3); h1.set('I8', v.centroCosto, false, 190); h1.set('J8', '', false, 187); }
+    else if (pr) { h1.set('H8', 'Total (proyecto):', false, 3); h1.set('I8', ta.total, false, 189); h1.set('J8', '', false, 187); }
   }
   const gs = [...v.gastos].sort((a, b) => (a.fecha || '').localeCompare(b.fecha || '')).slice(0, FILAS);
   let acc = 0;
@@ -1907,6 +1926,7 @@ async function exportarExcel(soloGenerar, vx) {
     h4.set('B' + r, l ? l.d : '', true); h4.set('F' + r, l ? l.f : '', true); h4.set('G' + r, l ? l.n : '', true); h4.set('I' + r, l ? l.t : '', true);
   }
   [['F10', v.trabajador], ['H10', v.cedula], ['B13', v.cliente], ['F13', v.cot], ['B15', v.servicio], ['F15', serial(v.inicio)], ['H15', serial(v.fin)], ['C16', v.os], ['F17', L.anticipo], ['H17', L.total], ['K42', L.aviso]].forEach(([r, x]) => h4.set(r, num(x), true));
+  { const f = foEnc(); h4.set('I3', f.codigo); h4.set('I4', 'Versión ' + f.version); /* casilla angosta: la fecha del formato sale en la vista de la app y el PDF */ }
   h4.set('G7', num(v.consecutivo)); h4.set('F18', v.efectivo === '' || v.efectivo == null ? '' : Number(v.efectivo));
   if (SOLO_VALORES) { L.lineas.forEach((l, i) => h4.set('K' + (22 + i), l.d)); if (!L.lineas.length) h4.set('K22', ''); h4.aplanar(); }
   zip.file(p4, h4.xml());
@@ -2330,6 +2350,7 @@ function aplicarRegistros(F) {
     const sub = pre => { const o = {}; let hay = false; for (const [k, x] of Object.entries(c)) if (k.startsWith(pre)) { o[k.slice(pre.length)] = x; hay = true; } return hay ? o : null; };
     const p = sub('perfil.') || c.perfil, d = sub('drive.') || c.drive;
     if (p) S.perfil = p; if (d) S.drive = d;
+    try { aplicarConceptosCentral(); } catch {}
   }
   if (!S.viajes.length) S.viajes.push(nuevoViaje());
   if (!S.viajes.some(v => v.id === S.activo)) S.activo = S.viajes[0].id;
@@ -2594,6 +2615,7 @@ async function cargarAprobadores() {
       if (!fs.length) continue;
       const d = await GW.api('GET', `${DRIVE}/${fs[0].id}?alt=media`);
       if (Array.isArray(d.aprobadores)) { ponerListaAprob(d.aprobadores); aprobArchivo = fs[0].id; }
+      if (ponerCentral(d)) render(); else if (tab === 'viaje' || tab === 'legal' || tab === 'config') render();
       break;
     } catch {}
   }
@@ -2613,7 +2635,8 @@ async function guardarAprobadores(lista) {
   try {
     const q = Q_APROB + " and 'me' in owners";
     const ex = (await GW.api('GET', `${DRIVE}?fields=files(id)&q=${encodeURIComponent(q)}`)).files || [];
-    const datos = { aprobadores: nueva, admin: ADMIN_CORREO, actualizado: new Date().toISOString() };
+    let actual = {}; if (ex[0]) { try { actual = await GW.api('GET', `${DRIVE}/${ex[0].id}?alt=media`); } catch { actual = central(); } }
+    const datos = { ...actual, aprobadores: nueva, admin: ADMIN_CORREO, actualizado: new Date().toISOString() };
     const b = 'aprob' + Date.now(), meta = ex[0] ? { name: 'Aprobadores de viáticos.json' } : { name: 'Aprobadores de viáticos.json', appProperties: { viaticosAprobadores: '1' }, parents: [await GW.carpeta(FICHAS_CARPETA, 'root')] };
     const body = new Blob([`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: application/json\r\n\r\n`, JSON.stringify(datos), `\r\n--${b}--`]);
     const r = await GW.api(ex[0] ? 'PATCH' : 'POST', `https://www.googleapis.com/upload/drive/v3/files${ex[0] ? '/' + ex[0].id : ''}?uploadType=multipart&fields=id`, body, 'multipart/related; boundary=' + b);
@@ -2662,6 +2685,7 @@ function datosFicha(d) {
     servicios: esServ(v0), trabajador: v0.trabajador || '', cedula: v0.cedula || '', email: correoActual(), cliente: v0.cliente || '', cot: v0.cot || '', os: v0.os || '', servicio: v0.servicio || '', ciudad: v0.ciudad || '',
     inicio: v.inicio || '', fin: v.fin || '', enviado: new Date().toISOString(), archivos: [...(d.archivos || []), ...pdfSubidos.map(p => ({ ...p, pdf: true }))], carpetaLink: d.carpetaLink || '', ruta: d.ruta || '' };
   { const ta = totalesAnticipo(v0); base.anticipos = anticiposDe(v0).map(a => ({ fecha: a.fecha || '', valor: Number(a.valor) || 0, destino: a.destino === 'tarjeta' ? 'tarjeta' : 'empleado', nota: a.nota || '' })); base.antEmpleado = ta.empleado; base.antTarjeta = ta.tarjeta; }
+  base.centro = v0.centroCosto || '';
   base.nGastos = conValor(v).length; base.nFotos = v.gastos.filter(g => g.foto).length;
   base.sistronic = sum(conValor(v).filter(g => g.pagadoPor === 'Sistronic'), g => g.valor);
   if (fin) {
@@ -2786,7 +2810,7 @@ function vFichaDetalle(f) {
   <div class="card adm-cab"><div class="row" style="justify-content:space-between;align-items:center;flex-wrap:nowrap"><b>${esc(d.tipoLeg)}</b><span class="chip ${ADM_EST[p.estado][1]}">${ADM_EST[p.estado][0].toUpperCase()}</span></div>
   <div class="adm-quien">${esc(d.trabajador || f.dueño.displayName || '')}<small>${esc(d.email || f.dueño.emailAddress || '')}</small></div>
   <div class="adm-kpis"><div><small>Total legalizado</small><b class="num">${fmtCOP(d.total)}</b></div><div><small>Anticipo</small><b class="num">${fmtCOP(d.anticipo)}</b></div><div><small>${d.saldo >= 0 ? 'Saldo a favor empresa' : 'Saldo a favor trabajador'}</small><b class="num">${fmtCOP(Math.abs(d.saldo))}</b></div></div>
-  <table class="adm-datos">${fila('Proyecto', esc(tituloFicha(d)))}${fila('Servicio', esc(d.servicio && d.servicio !== SERV ? d.servicio : ''))}${fila('Ciudad', esc(d.ciudad))}${fila('Fechas', `${fechaCorta(d.inicio)} a ${fechaCorta(d.fin)}`)}${fila('Gastos', `${d.nGastos} (${d.nFotos} con foto de factura)`)}${fila('Pagado por Sistronic', d.sistronic ? fmtCOP(d.sistronic) : '')}${d.anticipos && d.anticipos.length ? fila('Anticipos del proyecto', `${d.anticipos.map(a => `${fechaCorta(a.fecha)} · ${fmtCOP(a.valor)} · ${DEST_ANT[a.destino][0]} ${DEST_ANT[a.destino][1]}${a.nota ? ' (' + esc(a.nota) + ')' : ''}`).join('<br>')}<br><small>💳 Empleado ${fmtCOP(d.antEmpleado)} · 🛠️ Tarjeta ${fmtCOP(d.antTarjeta)}</small>`) : ''}${fila('Enviada', fmtFH(p.enviado) + (Number(p.envios) > 1 ? ` (reenvío ${p.envios})` : ''))}</table></div>`;
+  <table class="adm-datos">${fila('Proyecto', esc(tituloFicha(d)))}${fila('Servicio', esc(d.servicio && d.servicio !== SERV ? d.servicio : ''))}${fila('Ciudad', esc(d.ciudad))}${fila('Centro de costo', esc(d.centro || ''))}${fila('Fechas', `${fechaCorta(d.inicio)} a ${fechaCorta(d.fin)}`)}${fila('Gastos', `${d.nGastos} (${d.nFotos} con foto de factura)`)}${fila('Pagado por Sistronic', d.sistronic ? fmtCOP(d.sistronic) : '')}${d.anticipos && d.anticipos.length ? fila('Anticipos del proyecto', `${d.anticipos.map(a => `${fechaCorta(a.fecha)} · ${fmtCOP(a.valor)} · ${DEST_ANT[a.destino][0]} ${DEST_ANT[a.destino][1]}${a.nota ? ' (' + esc(a.nota) + ')' : ''}`).join('<br>')}<br><small>💳 Empleado ${fmtCOP(d.antEmpleado)} · 🛠️ Tarjeta ${fmtCOP(d.antTarjeta)}</small>`) : ''}${fila('Enviada', fmtFH(p.enviado) + (Number(p.envios) > 1 ? ` (reenvío ${p.envios})` : ''))}</table></div>`;
   if (p.estado !== 'pendiente') h += `<div class="note ${p.estado === 'aprobado' ? 'ok' : ''}">${p.estado === 'aprobado' ? '✔ Aprobada' : '↩ Devuelta'} el ${fmtFH(p.decididoEn)}${p.decididoPor ? ' por ' + esc(p.decididoPor) : ''}${p.nota ? '<br>Motivo: ' + esc(p.nota) : ''}</div>`;
   const arch = d.archivos || [];
   h += `<div class="row adm-arch">${arch.map((a, i) => a.link ? `<button class="btn" data-act="adm-link" data-i="${i}">${a.pdf ? '📄 PDF de facturas' : arch.filter(x => !x.pdf).length > 1 && /^Resumen/.test(a.nombre) ? '📊 Resumen de cortes' : '📊 Excel de legalización'}</button>` : '').join('')}${d.carpetaLink ? `<button class="btn" data-act="adm-link" data-i="carpeta">📁 Carpeta</button>` : ''}</div>`;
@@ -2855,7 +2879,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '58 (27/11/2026)';
+const APP_VERSION = '59 (27/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
@@ -2910,8 +2934,9 @@ function vConfig() {
       <button class="btn" data-act="logout" style="flex:0 0 auto">Cerrar sesión</button>
     </div>
     <div class="card" id="sync-cfg" style="margin-top:12px">${vSyncCfg()}</div>
+    ${vAdminCfg()}
     <h2>Conceptos de gasto</h2>
-    <div class="card form"><div class="row"><button class="btn" data-act="cp-abrir">Administrar conceptos y subconceptos</button></div></div>
+    <div class="card form"><div class="row"><button class="btn" data-act="cp-abrir">${conceptosFijos() ? 'Ver conceptos (los define el administrador)' : esAdminPrincipal() ? 'Administrar conceptos y publicarlos para todos' : 'Administrar conceptos y subconceptos'}</button></div></div>
     ${vAprobadoresCfg()}
     ${vExternosCfg()}
     <h2>Firma para la legalización</h2>
@@ -2939,7 +2964,7 @@ function vConfig() {
   }
   h += `<h2>Empresa</h2>
   <div class="card form">
-    <label class="field"><span>NIT de Sistronic (sin dígito de verificación)</span><input id="emp-nit" inputmode="numeric" value="${esc((S.empresa || {}).nit || '')}" placeholder="Ej. 900123456"></label>
+    ${empCentral().nit ? `<div class="field"><span>NIT de Sistronic</span><div class="note ok" style="margin:0">${esc(empCentral().nit)}${empCentral().razon ? ' · ' + esc(empCentral().razon) : ''} <small>(lo fija el administrador)</small></div></div>` : `<label class="field"><span>NIT de Sistronic (sin dígito de verificación)</span><input id="emp-nit" inputmode="numeric" value="${esc((S.empresa || {}).nit || '')}" placeholder="Ej. 900123456"></label>`}
     <p class="hint" style="margin:0">Con este NIT la app le avisa cuando una factura no está a nombre de Sistronic (por ejemplo, "Consumidor final").</p>
   </div>`;
   h += vIA();
@@ -3045,6 +3070,7 @@ async function guardarExternos(lista) {
     const r = await GW.api(ex[0] ? 'PATCH' : 'POST', `https://www.googleapis.com/upload/drive/v3/files${ex[0] ? '/' + ex[0].id : ''}?uploadType=multipart&fields=id`, body, 'multipart/related; boundary=' + b);
     const fallos = [];
     for (const c of nueva) if (!(await permiso(r.id, { role: 'reader', type: 'user', emailAddress: c }))) fallos.push(c);
+    if (aprobArchivo) for (const c of nuevos) await permiso(aprobArchivo, { role: 'reader', type: 'user', emailAddress: c });
     if (quitados.length) {
       const ps = (await GW.api('GET', `${DRIVE}/${r.id}/permissions?supportsAllDrives=true&fields=permissions(id,emailAddress,role)`)).permissions || [];
       for (const p of ps) if (p.role !== 'owner' && quitados.includes(String(p.emailAddress || '').toLowerCase())) await GW.api('DELETE', `${DRIVE}/${r.id}/permissions/${p.id}?supportsAllDrives=true`).catch(() => {});
@@ -3072,6 +3098,319 @@ function vExternosCfg() {
     <p class="hint" style="margin:0">Si Google le muestra a esa persona "acceso bloqueado", hay que agregar el correo como usuario de prueba en Google Cloud (pantalla de consentimiento OAuth).</p>
   </div>`;
 }
+/* ---------- Administración (solo proyectos1) ----------
+   Configuración central: va en el mismo archivo de la lista de aprobadores (compartido con @sistronic.com.co y con los
+   correos externos autorizados). Trae datos de la empresa, centros de costo, el encabezado del FO-AD-03, la lista de
+   conceptos, los proyectos/clientes, los días para el recordatorio y las cuentas bloqueadas (como huella SHA-256).
+   Seguimiento: la app de cada persona deja en su Drive un resumen pequeño compartido solo con el administrador. */
+let CENTRAL = null;
+function limpiarCentral(d) {
+  d = d && typeof d === 'object' ? d : {};
+  const o = {}, txt = (x, n) => String(x == null ? '' : x).trim().slice(0, n);
+  if (d.empresa && typeof d.empresa === 'object') {
+    const e = d.empresa;
+    o.empresa = { razon: txt(e.razon, 120), nit: soloDig(e.nit).slice(0, 15), foCodigo: txt(e.foCodigo, 20), foVersion: txt(e.foVersion, 10), foFecha: /^\d{4}-\d{2}-\d{2}$/.test(e.foFecha || '') ? e.foFecha : '',
+      logo: /^data:image\/(png|jpeg);base64,/.test(e.logo || '') && e.logo.length < 400000 ? e.logo : '',
+      centros: [...new Set((Array.isArray(e.centros) ? e.centros : []).map(x => txt(x, 60)).filter(Boolean))].slice(0, 100) };
+  }
+  if (d.conceptos && typeof d.conceptos === 'object' && d.conceptos.listas && typeof d.conceptos.listas === 'object' && Object.keys(d.conceptos.listas).length)
+    o.conceptos = { listas: d.conceptos.listas, cfg: d.conceptos.cfg || {}, off: d.conceptos.off || {}, fecha: d.conceptos.fecha || '' };
+  if (Array.isArray(d.proyectos)) o.proyectos = d.proyectos.map(p => ({ cliente: txt(p && p.cliente, 80), proyecto: txt(p && p.proyecto, 120) })).filter(p => p.cliente || p.proyecto).slice(0, 500);
+  if (d.recordatorioDias != null && d.recordatorioDias !== '') o.recordatorioDias = Math.max(0, Math.min(365, Math.round(Number(d.recordatorioDias)) || 0));
+  if (Array.isArray(d.bloqueados)) o.bloqueados = d.bloqueados.filter(x => /^[0-9a-f]{64}$/.test(x)).slice(0, 500);
+  return o;
+}
+function central() { if (!CENTRAL) { try { CENTRAL = limpiarCentral(JSON.parse(localStorage.getItem('central:cfg') || 'null')); } catch { CENTRAL = {}; } } return CENTRAL; }
+function ponerCentral(d) { CENTRAL = limpiarCentral(d); try { localStorage.setItem('central:cfg', JSON.stringify(CENTRAL)); } catch {} return aplicarCentral(); }
+const empCentral = () => central().empresa || {};
+// Datos de la empresa: los del administrador mandan; si no hay, los que la persona puso en su app
+const empresaCfg = () => { const e = Object.assign({}, (S && S.empresa) || {}), c = empCentral(); if (c.nit) e.nit = c.nit; if (c.razon) e.razon = c.razon; return e; };
+const logoEmp = () => empCentral().logo || LOGO;
+const foEnc = () => { const c = empCentral(); return { codigo: c.foCodigo || 'FO-AD-03', version: c.foVersion || '3', fecha: c.foFecha || '' }; };
+const centrosCosto = () => empCentral().centros || [];
+const diasRecordatorio = () => { const d = central().recordatorioDias; return d == null ? 8 : d; };
+// Aplica la configuración central en esta app. Devuelve true si cambió algo que se ve.
+function aplicarCentral() {
+  let cambio = false;
+  try { const l = logoEmp(); ['#hdr-logo'].forEach(s => { const im = $(s); if (im && im.getAttribute('src') !== l) im.src = l; }); } catch {}
+  if (S && aplicarConceptosCentral()) { cambio = true; guardar(); }
+  revisarBloqueo();
+  return cambio;
+}
+// La lista de conceptos del administrador reemplaza la de cada persona. Los conceptos que la persona ya usó y que
+// no están en la lista quedan como "desactivados" para no dañar los gastos viejos.
+function aplicarConceptosCentral() {
+  const c = central().conceptos; if (!c || !S) return false;
+  if (esAdminPrincipal()) { let sp = ''; try { sp = localStorage.getItem('cp:sinPublicar') || ''; } catch {} if (sp) return false; }
+  const listas = JSON.parse(JSON.stringify(c.listas)), cfg = JSON.parse(JSON.stringify(c.cfg || {})), off = JSON.parse(JSON.stringify(c.off || {}));
+  for (const v of S.viajes) for (const g of v.gastos) {
+    if (!g.concepto) continue;
+    if (!(g.concepto in listas) && !(g.concepto in off)) off[g.concepto] = [];
+    const subs = listas[g.concepto] || off[g.concepto], so = (cfg[g.concepto] && cfg[g.concepto].subsOff) || [];
+    if (g.sub && !subs.includes(g.sub) && !so.includes(g.sub)) { if (g.concepto in listas) { cfg[g.concepto] = cfg[g.concepto] || {}; cfg[g.concepto].subsOff = [...so, g.sub]; } else subs.push(g.sub); }
+  }
+  const nuevo = JSON.stringify([listas, cfg, off]);
+  if (JSON.stringify([S.listas, S.conceptosCfg || {}, S.conceptosOff || {}]) === nuevo) return false;
+  S.listas = listas; S.conceptosCfg = cfg; S.conceptosOff = off; return true;
+}
+const conceptosFijos = () => !!central().conceptos && !esAdminPrincipal();
+let bloqueoRevisando = false;
+async function revisarBloqueo() {
+  const b = central().bloqueados || [], e = correoActual();
+  if (!b.length || !e || e === ADMIN_CORREO || bloqueoRevisando) return;
+  bloqueoRevisando = true;
+  try {
+    if (b.includes(await sha256Hex(e))) {
+      Android.logoutSilencioso();
+      loginEstado = { cargando: false, msg: `La cuenta ${e} fue bloqueada por el administrador de la app. Si cree que es un error, comuníquese con él.`, config: false };
+      try { pintarLogin(); } catch {} render();
+    }
+  } catch {}
+  bloqueoRevisando = false;
+}
+// Guarda cambios en la configuración central (solo el administrador). Lee el archivo actual para no pisar lo demás.
+async function guardarCentral(parcial) {
+  if (!esAdminPrincipal()) throw new Error('Solo el administrador puede cambiar esto');
+  const q = Q_APROB + " and 'me' in owners";
+  const ex = (await GW.api('GET', `${DRIVE}?fields=files(id)&q=${encodeURIComponent(q)}`)).files || [];
+  let actual = {};
+  if (ex[0]) { try { actual = await GW.api('GET', `${DRIVE}/${ex[0].id}?alt=media`); } catch {} }
+  const datos = { ...actual, ...limpiarCentral({ ...limpiarCentral(actual), ...parcial }), aprobadores: Array.isArray(actual.aprobadores) ? actual.aprobadores : listaAprob(), admin: ADMIN_CORREO, actualizado: new Date().toISOString() };
+  for (const k of Object.keys(parcial)) if (parcial[k] == null) delete datos[k];
+  const b = 'cen' + Date.now(), meta = ex[0] ? { name: 'Aprobadores de viáticos.json' } : { name: 'Aprobadores de viáticos.json', appProperties: { viaticosAprobadores: '1' }, parents: [await GW.carpeta(FICHAS_CARPETA, 'root')] };
+  const body = new Blob([`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: application/json\r\n\r\n`, JSON.stringify(datos), `\r\n--${b}--`]);
+  const r = await GW.api(ex[0] ? 'PATCH' : 'POST', `https://www.googleapis.com/upload/drive/v3/files${ex[0] ? '/' + ex[0].id : ''}?uploadType=multipart&fields=id`, body, 'multipart/related; boundary=' + b);
+  aprobArchivo = r.id;
+  if (!ex[0]) { await permiso(r.id, { role: 'reader', type: 'domain', domain: DOMINIO, allowFileDiscovery: true }); await Promise.all(listaAprob().map(c => permiso(r.id, { role: 'reader', type: 'user', emailAddress: c }))); }
+  await Promise.all(listaExt().map(c => permiso(r.id, { role: 'reader', type: 'user', emailAddress: c })));
+  ponerCentral(datos);
+  return datos;
+}
+
+/* ----- Resumen de cada persona (lo lee el administrador) ----- */
+const Q_RES = "appProperties has { key='viaticosResumen' and value='1' } and trashed = false";
+const EST_REV = { enviado: 'enviada', aprobado: 'aprobada', devuelto: 'devuelta' };
+// Estado de los anticipos de un viaje: cuánto se dio, cuánto está legalizado (aprobado) y desde cuándo hay saldo sin legalizar
+function estadoAnticipos(v) {
+  const ta = totalesAnticipo(v), ks = cortesDe(v), rv = v.revision && v.revision.estado;
+  let legalizado = 0, desdeCorte = '';
+  if (rv === 'aprobado') legalizado = ta.total;
+  else for (const c of ks) if (c.revision && c.revision.estado === 'aprobado') { legalizado += empleadoTotal(gastosCorte(v, c)); if (c.hasta > desdeCorte) desdeCorte = c.hasta; }
+  legalizado = Math.min(legalizado, ta.total);
+  const pendiente = rv === 'aprobado' ? 0 : Math.max(0, ta.total - legalizado);
+  const fechas = anticiposDe(v).filter(a => Number(a.valor) > 0 && a.fecha).map(a => a.fecha).sort();
+  let desde = fechas[0] || '';
+  if (desdeCorte) { const d = parseISO(desdeCorte); d.setDate(d.getDate() + 1); const t = toISO(d); if (t > desde) desde = t; }
+  const enRevision = rv === 'enviado' || ks.some(c => c.revision && c.revision.estado === 'enviado');
+  const dias = pendiente > 0 && desde ? Math.max(0, Math.floor((parseISO(todayISO()) - parseISO(desde)) / 864e5)) : 0;
+  return { ...ta, legalizado, pendiente, desde, dias, enRevision, estado: EST_REV[rv] || (ks.length ? 'con cortes' : 'sin enviar') };
+}
+function datosResumen() {
+  const p = perfil() || {}, leg = { enviadas: 0, pendientes: 0, aprobadas: 0, devueltas: 0 };
+  const cuenta = r => { if (!r || !r.estado) return; leg.enviadas++; if (r.estado === 'enviado') leg.pendientes++; else if (r.estado === 'aprobado') leg.aprobadas++; else if (r.estado === 'devuelto') leg.devueltas++; };
+  const viajes = [];
+  for (const v of S.viajes) {
+    cuenta(v.revision); cortesDe(v).forEach(c => cuenta(c.revision));
+    const ea = estadoAnticipos(v);
+    if (!v.gastos.length && !ea.total) continue;
+    viajes.push({ id: v.id, titulo: tituloViaje(v).replace('🧰 ', ''), cliente: v.cliente || '', cot: v.cot || '', os: v.os || '', inicio: v.inicio || '', fin: v.fin || '', centro: v.centroCosto || '',
+      anticipos: anticiposDe(v).map(a => ({ fecha: a.fecha || '', valor: Number(a.valor) || 0, destino: a.destino === 'tarjeta' ? 'tarjeta' : 'empleado' })),
+      empleado: ea.empleado, tarjeta: ea.tarjeta, total: ea.total, gastado: empleadoTotal(v.gastos), legalizado: ea.legalizado, pendiente: ea.pendiente, desde: ea.desde, dias: ea.dias, enRevision: ea.enRevision, estado: ea.estado });
+  }
+  return { app: 'viaticos-sistronic', tipo: 'resumen', nombre: (S.perfil && S.perfil.trabajador) || ((S.viajes.find(v => v.trabajador) || {}).trabajador) || p.name || '', version: APP_VERSION, leg, viajes };
+}
+let resPublicando = false;
+async function publicarResumen(forzar) {
+  if (!enAndroidGoogle() || !GW.valido() || !S || resPublicando || syncCorriendo) return;
+  const email = correoActual(); if (!email) return;
+  const d = datosResumen(), huella = JSON.stringify(d), k = 'res:' + email;
+  let prev = {}; try { prev = JSON.parse(localStorage.getItem(k) || '{}'); } catch {}
+  if (!forzar && prev.h === huella && Date.now() - (prev.t || 0) < 3600000) return;
+  if (!forzar && Date.now() - (prev.t || 0) < 90000) return;
+  resPublicando = true;
+  try {
+    const datos = { ...d, email, ultima: new Date().toISOString() };
+    const ex = (await GW.api('GET', `${DRIVE}?fields=files(id)&q=${encodeURIComponent(Q_RES + " and 'me' in owners")}`)).files || [];
+    const b = 'res' + Date.now(), nombre = 'Resumen de viáticos (no borrar).json', meta = ex[0] ? { name: nombre } : { name: nombre, appProperties: { viaticosResumen: '1' }, parents: [await GW.carpeta(FICHAS_CARPETA, 'root')] };
+    const body = new Blob([`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: application/json\r\n\r\n`, JSON.stringify(datos), `\r\n--${b}--`]);
+    const r = await GW.api(ex[0] ? 'PATCH' : 'POST', `https://www.googleapis.com/upload/drive/v3/files${ex[0] ? '/' + ex[0].id : ''}?uploadType=multipart&fields=id`, body, 'multipart/related; boundary=' + b);
+    if (email !== ADMIN_CORREO && prev.c !== r.id) { if (await permiso(r.id, { role: 'reader', type: 'user', emailAddress: ADMIN_CORREO })) prev.c = r.id; }
+    try { localStorage.setItem(k, JSON.stringify({ h: huella, t: Date.now(), c: prev.c || '' })); } catch {}
+  } catch {}
+  resPublicando = false;
+}
+
+/* ----- Pantallas del administrador ----- */
+let admVista = 'menu', USR = { lista: [], cargando: false, fecha: 0, error: '' }, admAbierto = '', admBloq = '', admMsg = {};
+let EMPED = null, PRYED = null, admGuardando = '', admEstado = null;
+const shaCache = {};
+async function shaCorreo(e) { e = String(e || '').toLowerCase(); if (!shaCache[e]) shaCache[e] = await sha256Hex(e); return shaCache[e]; }
+async function cargarResumenes() {
+  if (!esAdminPrincipal() || USR.cargando) return;
+  USR.cargando = true; USR.error = ''; if (tab === 'admin') render();
+  try {
+    let fs = [], tok = '';
+    do { const r = await GW.api('GET', `${DRIVE}?corpora=user&pageSize=200&orderBy=modifiedTime desc&fields=nextPageToken,files(id,modifiedTime,owners(displayName,emailAddress))&q=${encodeURIComponent(Q_RES)}${tok ? '&pageToken=' + tok : ''}`); fs = fs.concat(r.files || []); tok = r.nextPageToken || ''; } while (tok && fs.length < 1000);
+    const vistos = new Set(), lista = [];
+    for (const f of fs) { const o = (f.owners || [])[0] || {}, e = String(o.emailAddress || '').toLowerCase(); if (!e || vistos.has(e)) continue; vistos.add(e); lista.push({ f, e, nombreG: o.displayName || '' }); }
+    const out = await Promise.all(lista.map(async x => { try { const d = await GW.api('GET', `${DRIVE}/${x.f.id}?alt=media`); return { email: x.e, nombre: d.nombre || x.nombreG || x.e.split('@')[0], ultima: d.ultima || x.f.modifiedTime, version: d.version || '', leg: d.leg || {}, viajes: Array.isArray(d.viajes) ? d.viajes : [], sha: await shaCorreo(x.e) }; } catch { return null; } }));
+    USR.lista = out.filter(Boolean).sort((a, b) => String(b.ultima).localeCompare(String(a.ultima)));
+    USR.fecha = Date.now();
+  } catch (e) { USR.error = e.message || 'No se pudo cargar'; }
+  USR.cargando = false; if (tab === 'admin') render();
+}
+function abrirAdmin(vista) {
+  if (!esAdminPrincipal()) return;
+  admVista = vista || 'menu'; admAbierto = ''; admBloq = ''; admEstado = null; tab = 'admin';
+  if (vista === 'empresa') EMPED = JSON.parse(JSON.stringify({ razon: '', nit: (S.empresa || {}).nit || '', foCodigo: 'FO-AD-03', foVersion: '3', foFecha: '', logo: '', centros: [], ...empCentral() }));
+  if (vista === 'proyectos') PRYED = JSON.parse(JSON.stringify(central().proyectos || []));
+  if ((vista === 'usuarios' || vista === 'anticipos') && (!USR.fecha || Date.now() - USR.fecha > 60000)) cargarResumenes();
+  render(); window.scrollTo(0, 0);
+}
+const haceCuanto = iso => { const ms = Date.now() - new Date(iso).getTime(); if (!(ms >= 0)) return ''; const m = Math.round(ms / 60000); return m < 2 ? 'hace un momento' : m < 60 ? `hace ${m} min` : m < 1440 ? `hace ${Math.round(m / 60)} h` : `hace ${Math.round(m / 1440)} día${Math.round(m / 1440) === 1 ? '' : 's'}`; };
+function vAdminCfg() {
+  if (!esAdminPrincipal()) return '';
+  const it = (v, ic, t, s) => `<button class="item adm-menu" data-act="admin-ir" data-v="${v}"><span class="t">${ic} ${t}</span><span class="a">›</span><span class="s">${s}</span></button>`;
+  return `<h2>Administración</h2>
+  <div class="list">
+    ${it('empresa', '🏢', 'Empresa y formato', 'NIT, logo, centros de costo y encabezado del FO-AD-03')}
+    ${it('conceptos', '🗂️', 'Conceptos para todos', central().conceptos ? 'Publicada ' + fechaCorta(central().conceptos.fecha) : 'Cada persona usa su propia lista')}
+    ${it('proyectos', '📁', 'Proyectos y clientes', `${(central().proyectos || []).length} en la lista`)}
+    ${it('usuarios', '👥', 'Usuarios', 'Quién entra, última vez, legalizaciones y bloqueo')}
+    ${it('anticipos', '💰', 'Anticipos y recordatorios', `Saldos por legalizar · aviso a los ${diasRecordatorio()} días`)}
+  </div>`;
+}
+function vAdmin() {
+  if (!cfgAbierta || !esAdminPrincipal()) { tab = 'gastos'; return vGastos(viaje()); }
+  const volver = `<div class="row" style="margin:0 0 6px"><button class="btn" data-act="cp-volver">‹ Configuración</button></div>`;
+  return volver + ({ empresa: vAdmEmpresa, proyectos: vAdmProyectos, usuarios: vAdmUsuarios, anticipos: vAdmAnticipos }[admVista] || (() => vAdminCfg()))();
+}
+const vAdmEstado = () => { const e = admEstado; if (!e) return ''; return e.estado === 'guardando' ? '<div class="note ia-busy"><span class="spin"></span> <span class="txt">Guardando para todos…</span></div>' : e.estado === 'ok' ? `<div class="note ok">✔ ${esc(e.msg)}</div>` : `<div class="note">⚠ ${esc(e.msg)}</div>`; };
+function vAdmEmpresa() {
+  const e = EMPED, ocup = admEstado && admEstado.estado === 'guardando';
+  return `<h2>Empresa y formato</h2>
+  <div class="card form" id="adm-emp">
+    <p class="hint" style="margin:0">Estos datos los toman todas las apps al abrirse con internet. Nadie más tiene que escribir el NIT.</p>
+    <label class="field"><span>Razón social</span><input data-emp="razon" value="${esc(e.razon)}" placeholder="SISTEMAS ELECTRONICOS S.A.S."></label>
+    <label class="field"><span>NIT (sin dígito de verificación)</span><input data-emp="nit" inputmode="numeric" value="${esc(e.nit)}" placeholder="Ej. 900123456"></label>
+    <div class="field"><span>Logo (sale en la legalización, el PDF y el Excel)</span>
+      <div class="adm-logo"><img src="${esc(e.logo || LOGO)}" alt="Logo"><div class="row" style="margin:0"><button type="button" class="btn" data-act="emp-logo">Cambiar logo</button>${e.logo ? '<button type="button" class="btn" data-act="emp-logo-quitar">Usar el original</button>' : ''}</div></div>
+      <input type="file" id="emp-logo-file" accept="image/png,image/jpeg" hidden></div>
+    <div class="field"><span>Encabezado del formato de legalización</span>
+      <div class="grid3"><label class="field"><span>Código</span><input data-emp="foCodigo" value="${esc(e.foCodigo)}"></label><label class="field"><span>Versión</span><input data-emp="foVersion" value="${esc(e.foVersion)}"></label><label class="field"><span>Fecha</span><input type="date" data-emp="foFecha" value="${esc(e.foFecha)}"></label></div></div>
+    <div class="field"><span>Centros de costo (el trabajador elige uno en cada viaje)</span>
+      <div class="aprob-list">${e.centros.map((c, i) => `<div class="aprob-row"><span>🏷️ ${esc(c)}</span><button type="button" class="btn danger" data-act="emp-cc-quitar" data-i="${i}">Quitar</button></div>`).join('') || '<div class="note" style="margin:0">Sin centros de costo: el campo no aparece en el viaje.</div>'}</div>
+      <div class="row" style="flex-wrap:nowrap"><input id="emp-cc-nuevo" placeholder="Ej. 1205 - Proyectos Cali" style="flex:1;min-width:0"><button type="button" class="btn" data-act="emp-cc-agregar" style="flex:0 0 auto">Agregar</button></div></div>
+    <button class="btn primary block" data-act="emp-guardar" ${ocup ? 'disabled' : ''}>Guardar para todos</button>
+    ${vAdmEstado()}
+  </div>`;
+}
+function vAdmProyectos() {
+  const l = PRYED, ocup = admEstado && admEstado.estado === 'guardando';
+  return `<h2>Proyectos y clientes</h2>
+  <div class="card form">
+    <p class="hint" style="margin:0">Salen como sugerencia al escribir el cliente y el proyecto del viaje, y el cliente de cada OS. Se puede seguir escribiendo uno que no esté.</p>
+    <div class="aprob-list">${l.map((p, i) => `<div class="aprob-row"><span><b>${esc(p.cliente || '—')}</b>${p.proyecto ? '<br><small>' + esc(p.proyecto) + '</small>' : ''}</span><button type="button" class="btn danger" data-act="pry-quitar" data-i="${i}">Quitar</button></div>`).join('') || '<div class="note" style="margin:0">La lista está vacía.</div>'}</div>
+    <div class="grid2"><label class="field"><span>Cliente</span><input id="pry-cli" placeholder="Ej. Abbott" autocomplete="off"></label><label class="field"><span>Proyecto (opcional)</span><input id="pry-pro" placeholder="Ej. Línea de blíster" autocomplete="off"></label></div>
+    <button type="button" class="btn block" data-act="pry-agregar">+ Agregar a la lista</button>
+    <button class="btn primary block" data-act="pry-guardar" ${ocup ? 'disabled' : ''}>Guardar para todos</button>
+    ${vAdmEstado()}
+  </div>`;
+}
+const usrBloqueado = u => (central().bloqueados || []).includes(u.sha);
+const barraUsr = () => `<div class="adm-bar"><span class="hint" style="margin:0">${USR.cargando ? '<span class="spin"></span> Actualizando…' : USR.fecha ? 'Actualizado ' + fmtFH(new Date(USR.fecha).toISOString()).slice(-5) : ''}</span><button class="btn" data-act="usr-recargar" ${USR.cargando ? 'disabled' : ''}>↻ Actualizar</button></div>${USR.error ? `<div class="note">⚠ ${esc(USR.error)}</div>` : ''}`;
+function vAdmUsuarios() {
+  const ocup = admEstado && admEstado.estado === 'guardando';
+  let h = `<h2>Usuarios (${USR.lista.length})</h2>${barraUsr()}${vAdmEstado()}`;
+  if (!USR.lista.length && !USR.cargando) return h + `<div class="empty">Todavía no hay datos.<br><small>Cada persona aparece aquí cuando abre la versión 59 (o una más nueva) con internet.</small></div>`;
+  h += `<div class="list">${USR.lista.map(u => { const b = usrBloqueado(u), L = u.leg || {}, yo = u.email === ADMIN_CORREO; return `<div class="item usr ${b ? 'usr-bloq' : ''}">
+    <span class="t">${b ? '🚫 ' : ''}${esc(u.nombre)}</span><span class="a"><small>${esc(haceCuanto(u.ultima))}</small></span>
+    <span class="s" style="grid-column:1/-1">${esc(u.email)}</span>
+    <span class="s" style="grid-column:1/-1">Última vez: ${fmtFH(u.ultima)}${u.version ? ' · app v' + esc(String(u.version).split(' ')[0]) : ''}</span>
+    <span class="s" style="grid-column:1/-1">Legalizaciones: <b>${L.enviadas || 0}</b> enviadas · ${L.aprobadas || 0} aprobadas · ${L.devueltas || 0} devueltas · ${L.pendientes || 0} por aprobar</span>
+    ${yo ? '<span class="s" style="grid-column:1/-1">👑 Administrador</span>' : `<span style="grid-column:1/-1;margin-top:6px"><button class="btn ${b ? '' : admBloq === u.email ? 'danger' : ''}" data-act="${b ? 'usr-desbloquear' : 'usr-bloquear'}" data-e="${esc(u.email)}" ${ocup ? 'disabled' : ''}>${b ? 'Desbloquear' : admBloq === u.email ? '¿Bloquear? Toque otra vez' : 'Bloquear'}</button></span>`}
+  </div>`; }).join('')}</div>
+  <p class="hint">Una cuenta bloqueada queda por fuera la próxima vez que abra la app con internet. Sus datos no se borran. Aquí aparecen las personas que han abierto la versión 59 o una más nueva.</p>`;
+  return h;
+}
+function vAdmAnticipos() {
+  const X = diasRecordatorio(), us = USR.lista.map(u => {
+    const vs = (u.viajes || []).filter(v => v.total > 0), t = { empleado: 0, tarjeta: 0, total: 0, legalizado: 0, pendiente: 0, dias: 0 };
+    for (const v of vs) { t.empleado += v.empleado; t.tarjeta += v.tarjeta; t.total += v.total; t.legalizado += v.legalizado; t.pendiente += v.pendiente; if (v.pendiente > 0 && !v.enRevision) t.dias = Math.max(t.dias, v.dias); }
+    return { u, vs, t, tarde: X > 0 && t.dias > X };
+  }).filter(x => x.vs.length).sort((a, b) => (b.tarde - a.tarde) || (b.t.dias - a.t.dias) || (b.t.pendiente - a.t.pendiente));
+  const G = us.reduce((a, x) => { for (const k of ['empleado', 'tarjeta', 'total', 'legalizado', 'pendiente']) a[k] += x.t[k]; return a; }, { empleado: 0, tarjeta: 0, total: 0, legalizado: 0, pendiente: 0 });
+  let h = `<h2>Anticipos</h2>${barraUsr()}
+  <div class="adm-kpis adm-kpis-ant"><div><small>Total entregado</small><b class="num">${fmtCOP(G.total)}</b></div><div><small>💳 A cuenta</small><b class="num">${fmtCOP(G.empleado)}</b></div><div><small>🛠️ A tarjeta</small><b class="num">${fmtCOP(G.tarjeta)}</b></div><div><small>Legalizado</small><b class="num">${fmtCOP(G.legalizado)}</b></div><div class="${G.pendiente ? 'warn' : ''}"><small>Por legalizar</small><b class="num">${fmtCOP(G.pendiente)}</b></div></div>
+  <div class="card form"><div class="row" style="flex-wrap:nowrap;align-items:center"><span style="flex:1">⏰ Recordar a los</span><input id="rec-dias" inputmode="numeric" value="${X}" style="width:64px;flex:0 0 64px;text-align:center"><span style="flex:0 0 auto">días</span><button class="btn" data-act="rec-guardar" style="flex:0 0 auto" ${admEstado && admEstado.estado === 'guardando' ? 'disabled' : ''}>Guardar</button></div>
+  <p class="hint" style="margin:0">Si alguien lleva más de esos días con un anticipo sin legalizar, la app le muestra un aviso y aquí sale en rojo. Ponga 0 para no avisar.</p>${vAdmEstado()}</div>`;
+  if (!us.length && !USR.cargando) return h + '<div class="empty">No hay anticipos registrados todavía.<br><small>Salen aquí cuando cada persona abre la versión 59 o una más nueva.</small></div>';
+  h += `<div class="list">${us.map(({ u, vs, t, tarde }) => { const ab = admAbierto === u.email, m = admMsg[u.email]; return `<div class="item ant-usr ${tarde ? 'tarde' : ''}">
+    <button class="ant-usr-h" data-act="ant-usr" data-e="${esc(u.email)}"><span class="t">${tarde ? '⏰ ' : ''}${esc(u.nombre)}</span><span class="a num">${fmtCOP(t.pendiente)}</span>
+    <span class="s">💳 ${fmtCOP(t.empleado)} · 🛠️ ${fmtCOP(t.tarjeta)}</span><span class="s" style="text-align:right">por legalizar</span>
+    <span class="s" style="grid-column:1/-1">${t.pendiente ? (t.dias ? `El más viejo lleva <b>${t.dias} día${t.dias === 1 ? '' : 's'}</b>` : 'En revisión o recién entregado') : '✔ Todo legalizado'} · Legalizado ${fmtCOP(t.legalizado)} de ${fmtCOP(t.total)} ${ab ? '▴' : '▾'}</span></button>
+    ${ab ? `<div class="ant-det">${vs.map(v => `<div class="ant-vj ${X > 0 && v.pendiente > 0 && !v.enRevision && v.dias > X ? 'tarde' : ''}"><b>${esc(v.titulo)}</b><small>${fechaCorta(v.inicio)} a ${fechaCorta(v.fin)} · ${esc(v.estado)}${v.enRevision ? ' (en revisión)' : ''}${v.centro ? ' · CC ' + esc(v.centro) : ''}</small>
+      <div class="ant-vj-n"><span>💳 ${fmtCOP(v.empleado)}</span><span>🛠️ ${fmtCOP(v.tarjeta)}</span><span>Legalizado ${fmtCOP(v.legalizado)}</span><span><b>Pendiente ${fmtCOP(v.pendiente)}</b>${v.pendiente && v.dias ? ` · ${v.dias} días` : ''}</span></div></div>`).join('')}
+      ${t.pendiente > 0 && u.email !== ADMIN_CORREO ? `<div class="row" style="margin:8px 0 0"><button class="btn ${tarde ? 'primary' : ''}" data-act="rec-enviar" data-e="${esc(u.email)}" ${m === 'enviando' ? 'disabled' : ''}>✉ Enviar recordatorio</button></div>` : ''}
+      ${m && m !== 'enviando' ? `<div class="hint" style="margin:6px 0 0">${esc(m)}</div>` : m === 'enviando' ? '<div class="hint"><span class="spin"></span> Enviando…</div>' : ''}</div>` : ''}
+  </div>`; }).join('')}</div><p class="hint">Los datos de cada persona son de la última vez que abrió la app con internet.</p>`;
+  return h;
+}
+async function enviarRecordatorio(email) {
+  const u = USR.lista.find(x => x.email === email); if (!u) return;
+  const vs = (u.viajes || []).filter(v => v.pendiente > 0); if (!vs.length) return;
+  admMsg[email] = 'enviando'; render();
+  const filas = vs.map(v => `<tr><td style="padding:4px 8px;border-bottom:1px solid #eee">${esc(v.titulo)}</td><td style="padding:4px 8px;border-bottom:1px solid #eee;text-align:right">${fmtCOP(v.total)}</td><td style="padding:4px 8px;border-bottom:1px solid #eee;text-align:right"><b>${fmtCOP(v.pendiente)}</b></td><td style="padding:4px 8px;border-bottom:1px solid #eee">${v.enRevision ? 'en revisión' : v.dias ? v.dias + ' días' : ''}</td></tr>`).join('');
+  const html = `<div style="font-family:Arial,sans-serif;font-size:14px;color:#222"><p>Hola ${esc(String(u.nombre).split(' ')[0])},</p>
+<p>Según la app de viáticos tiene anticipos pendientes por legalizar:</p>
+<table style="border-collapse:collapse;font-size:13px"><tr><th style="text-align:left;padding:4px 8px">Viaje</th><th style="padding:4px 8px">Anticipo</th><th style="padding:4px 8px">Por legalizar</th><th style="padding:4px 8px">Tiempo</th></tr>${filas}</table>
+<p>Por favor envíe la legalización desde la pestaña <b>Legalización</b> de la app.</p>
+<p style="color:#777;font-size:12px">Recordatorio enviado desde la app de Control de Viáticos de Sistronic.</p></div>`;
+  try { await GW.mail([email], 'Recordatorio: anticipos de viáticos por legalizar', html); admMsg[email] = '✉ Recordatorio enviado ' + fmtFH(new Date().toISOString()).slice(-5) + '.'; }
+  catch (e) { admMsg[email] = '⚠ No se envió: ' + (e.message || 'error'); }
+  render();
+}
+async function admGuardar(parcial, msgOk) {
+  admEstado = { estado: 'guardando' }; render();
+  try { await guardarCentral(parcial); admEstado = { estado: 'ok', msg: msgOk }; }
+  catch (e) { admEstado = { estado: 'error', msg: e.message || 'No se pudo guardar' }; }
+  render();
+}
+async function bloquearUsuario(email, si) {
+  const sha = await shaCorreo(email), l = new Set(central().bloqueados || []);
+  if (si) l.add(sha); else l.delete(sha);
+  admBloq = '';
+  await admGuardar({ bloqueados: [...l] }, si ? `${email} quedó bloqueado.` : `${email} puede volver a entrar.`);
+  if (si && listaExt().includes(email)) guardarExternos(listaExt().filter(c => c !== email));
+}
+// Logo: se reduce a máx. 480×200 para que el archivo central siga liviano
+async function leerLogo(file) {
+  const url = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
+  const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('No se pudo leer la imagen')); i.src = url; });
+  const k = Math.min(1, 480 / im.width, 200 / im.height), c = lienzo(Math.max(1, Math.round(im.width * k)), Math.max(1, Math.round(im.height * k)));
+  c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+  return c.toDataURL('image/png');
+}
+// Logo para el Excel: mismo tamaño de la imagen de la plantilla (280×119, se dibuja al doble) con el logo centrado
+async function logoExcelPNG(dataUrl) {
+  const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = dataUrl; });
+  const W = 560, H = 238, c = lienzo(W, H), k = Math.min(W / im.width, H / im.height), w = im.width * k, h = im.height * k;
+  c.getContext('2d').drawImage(im, (W - w) / 2, (H - h) / 2, w, h);
+  return b64Bytes(c.toDataURL('image/png').split(',')[1]);
+}
+// Aviso al trabajador: anticipos con más días de los permitidos sin legalizar
+function vRecordatorio() {
+  const X = diasRecordatorio(); if (!X || !S) return '';
+  const l = S.viajes.map(v => ({ v, e: estadoAnticipos(v) })).filter(x => x.e.pendiente > 0 && !x.e.enRevision && x.e.dias > X).sort((a, b) => b.e.dias - a.e.dias);
+  if (!l.length) return '';
+  return `<div class="note rec-aviso no-print">⏰ ${l.slice(0, 3).map(x => `Lleva <b>${x.e.dias} días</b> sin legalizar el anticipo de <b>${esc(tituloViaje(x.v).replace('🧰 ', ''))}</b> (${fmtCOP(x.e.pendiente)}).`).join('<br>')}${l.length > 3 ? `<br>Y ${l.length - 3} más.` : ''}
+    <div class="row" style="margin-top:8px"><button class="btn" data-act="rec-ir" data-id="${esc(l[0].v.id)}">Ir a legalizar</button></div></div>`;
+}
+// Sugerencias de clientes y proyectos (lista del administrador + los ya usados)
+function vListasSug() {
+  const P = central().proyectos || [], cl = new Set(P.map(p => p.cliente).filter(Boolean)), pr = new Set(P.map(p => p.proyecto).filter(Boolean));
+  return `<datalist id="dl-clientes">${[...cl].map(c => `<option value="${esc(c)}">`).join('')}</datalist><datalist id="dl-proyectos">${[...pr].map(c => `<option value="${esc(c)}">`).join('')}</datalist>`;
+}
 const textoAcceso = () => DOMINIOS_PERMITIDOS.length ? `Esta app es solo para el personal de Sistronic: entre con su correo ${DOMINIOS_PERMITIDOS.map(d => '@' + d).join(' o ')} o pida al administrador que autorice su correo.` : '';
 let loginEstado = { cargando: false, msg: '', config: false };
 function pintarLogin() {
@@ -3088,7 +3427,7 @@ function pintarLogin() {
     <p class="hint">Sus gastos se guardan en este equipo y en una carpeta privada de la app en su Google Drive, para verlos desde cualquier equipo con la misma cuenta.</p>
   </div>`;
 }
-window.onLoginOk = email => { programarSync(300); leerModoAdmin(); if (esAdmin()) admCargar(); setTimeout(cargarAprobadores, 1500); setTimeout(cargarExternosAdmin, 2000); setTimeout(() => revisarFichas(true), 4000); loginEstado = { cargando: false, msg: '', config: false }; const p = perfil(); toast('Bienvenido, ' + (p ? p.corto : email)); pintarLogin(); render(); };
+window.onLoginOk = email => { programarSync(300); setTimeout(() => publicarResumen(true), 6000); leerModoAdmin(); if (esAdmin()) admCargar(); setTimeout(cargarAprobadores, 1500); setTimeout(cargarExternosAdmin, 2000); setTimeout(() => revisarFichas(true), 4000); loginEstado = { cargando: false, msg: '', config: false }; const p = perfil(); toast('Bienvenido, ' + (p ? p.corto : email)); pintarLogin(); render(); };
 window.onLoginError = (msg, config) => { loginEstado = { cargando: false, msg, config: config === 'config' }; pintarLogin(); };
 window.onLogout = () => { pintarLogin(); render(); };
 
@@ -3308,7 +3647,7 @@ async function agregarHojaOS(zip, v) {
 }
 // ¿A nombre de quién está la factura? sistronic · tercero · sin (sin dato del comprador)
 function compradorDe(g) {
-  const emp = soloDig((S.empresa || {}).nit), cn = soloDig(g.compradorNit), nom = String(g.compradorNombre || '').toLowerCase();
+  const emp = soloDig(empresaCfg().nit), cn = soloDig(g.compradorNit), nom = String(g.compradorNombre || '').toLowerCase();
   if (!cn && !nom.trim()) return 'sin';
   if ((emp && cn && cn.slice(0, emp.length) === emp) || /sistronic|sistemas\s*electr[oó]nicos/.test(nom)) return 'sistronic';
   return 'tercero';
@@ -3475,7 +3814,25 @@ document.addEventListener('click', async e => {
     case 'os-chip': { leerFormGasto(); editando.os = t.dataset.os; editando.osCliente = t.dataset.cli || osClientes()[t.dataset.os] || ''; pintarGasto._y = $('#g-form').scrollTop; pintarGasto(); break; }
     case 'vista-gastos': vistaGastos = t.dataset.v; render(); break;
     case 'cp-abrir': if (!cfgAbierta) { cpPendiente = true; abrirConfig(); break; } tab = 'conceptos'; cpBuscar = ''; cpAgregando = null; render(); window.scrollTo(0, 0); break;
-    case 'cp-volver': tab = 'config'; render(); window.scrollTo(0, 0); break;
+    case 'cp-volver': tab = 'config'; admEstado = null; render(); window.scrollTo(0, 0); break;
+    case 'admin-ir': if (t.dataset.v === 'conceptos') { admEstado = null; tab = 'conceptos'; cpBuscar = ''; cpAgregando = null; render(); window.scrollTo(0, 0); } else abrirAdmin(t.dataset.v); break;
+    case 'cp-publicar': admGuardar({ conceptos: { listas: S.listas, cfg: S.conceptosCfg || {}, off: S.conceptosOff || {}, fecha: new Date().toISOString() } }, 'Publicada. Las apps de todos la toman al abrirse con internet.'); break;
+    case 'cp-despublicar': admGuardar({ conceptos: null }, 'Listo: cada persona vuelve a manejar su propia lista.'); break;
+    case 'emp-logo': $('#emp-logo-file').click(); break;
+    case 'emp-logo-quitar': EMPED.logo = ''; render(); break;
+    case 'emp-cc-agregar': { const i = $('#emp-cc-nuevo'), c = (i?.value || '').trim(); if (!c) { toast('Escriba el centro de costo'); break; } if (EMPED.centros.some(x => x.toLowerCase() === c.toLowerCase())) { toast('Ya está en la lista'); break; } EMPED.centros.push(c); render(); break; }
+    case 'emp-cc-quitar': EMPED.centros.splice(+t.dataset.i, 1); render(); break;
+    case 'emp-guardar': { const e = EMPED; if (e.nit && soloDig(e.nit).length < 6) { toast('Revise el NIT'); break; } admGuardar({ empresa: e }, 'Guardado. Las apps de todos lo toman al abrirse con internet.'); break; }
+    case 'pry-agregar': { const c = ($('#pry-cli')?.value || '').trim(), pr = ($('#pry-pro')?.value || '').trim(); if (!c && !pr) { toast('Escriba el cliente o el proyecto'); break; } if (PRYED.some(x => x.cliente.toLowerCase() === c.toLowerCase() && x.proyecto.toLowerCase() === pr.toLowerCase())) { toast('Ya está en la lista'); break; } PRYED.push({ cliente: c, proyecto: pr }); PRYED.sort((a, b) => (a.cliente + a.proyecto).localeCompare(b.cliente + b.proyecto, 'es')); render(); break; }
+    case 'pry-quitar': PRYED.splice(+t.dataset.i, 1); render(); break;
+    case 'pry-guardar': admGuardar({ proyectos: PRYED }, 'Guardado. Las apps de todos lo toman al abrirse con internet.'); break;
+    case 'usr-recargar': cargarResumenes(); break;
+    case 'usr-bloquear': if (admBloq !== t.dataset.e) { admBloq = t.dataset.e; render(); break; } bloquearUsuario(t.dataset.e, true); break;
+    case 'usr-desbloquear': bloquearUsuario(t.dataset.e, false); break;
+    case 'ant-usr': admAbierto = admAbierto === t.dataset.e ? '' : t.dataset.e; render(); break;
+    case 'rec-guardar': { const n = Math.round(Number(($('#rec-dias')?.value || '').replace(/\D/g, ''))); if (!(n >= 0 && n <= 365)) { toast('Escriba un número de días entre 0 y 365'); break; } admGuardar({ recordatorioDias: n }, n ? `Guardado: se avisa a los ${n} días.` : 'Guardado: no se avisa.'); break; }
+    case 'rec-enviar': enviarRecordatorio(t.dataset.e); break;
+    case 'rec-ir': { if (S.viajes.some(x => x.id === t.dataset.id)) { S.activo = t.dataset.id; guardar(); } tab = 'legal'; render(); window.scrollTo(0, 0); break; }
     case 'cp-nuevo': abrirConcepto(null); break;
     case 'cp-editar': abrirConcepto(t.dataset.c); break;
     case 'cp-sub-add': cpAgregando = t.dataset.c; render(); setTimeout(() => $('#cp-nuevo-sub')?.focus(), 30); break;
@@ -3505,6 +3862,7 @@ document.addEventListener('submit', e => { if (e.target.id === 'g-form') { e.pre
 document.addEventListener('input', e => {
   const el = e.target;
   if (el.hasAttribute('data-money')) moneyFormat(el);
+  if (el.dataset.emp && EMPED) EMPED[el.dataset.emp] = el.dataset.emp === 'nit' ? soloDig(el.value) : el.value;
   if (el.dataset.ant) {
     const v = viaje(), a = anticiposDe(v).find(x => x.id === el.dataset.id);
     if (a) { a[el.dataset.ant] = el.dataset.ant === 'valor' ? (el.value === '' ? 0 : parseValor(el.value)) : el.value; sincAnticipo(v); guardar(); const t = $('#ant-tot'); if (t) t.innerHTML = vAntTot(v); }
@@ -3531,6 +3889,7 @@ document.addEventListener('input', e => {
   if (el.id === 'pv-nit') { const d = $('#pv-dv'); if (d) d.textContent = dvNIT(el.value) || '—'; }
   if (corteForm && (el.id === 'ct-desde' || el.id === 'ct-hasta')) { corteForm[el.id === 'ct-desde' ? 'desde' : 'hasta'] = el.value; corteForm.adicional = parseValor(($('#ct-adic') || {}).value) || 0; const y = window.scrollY; render(); window.scrollTo(0, y); }
   if (el.id === 'firma-file' && el.files[0]) { const fl = el.files[0]; el.value = ''; firmaDeImagen(fl).then(async f => { if (!f) { toast('No se encontró la firma en la imagen'); return; } S.firma = f; await guardar(); render(); toast('Firma guardada'); }).catch(() => toast('No se pudo leer la imagen')); }
+  if (el.id === 'emp-logo-file' && el.files[0] && EMPED) { leerLogo(el.files[0]).then(u => { EMPED.logo = u; render(); }, er => toast(er.message || 'No se pudo leer la imagen')); }
   if (el.id === 'emp-nit') { S.empresa = Object.assign(S.empresa || {}, { nit: soloDig(el.value) }); guardar(); }
   if (el.id === 'dr-correos') { driveCfg().correos = el.value; guardar(); }
   if (el.id === 'ia-key') { IA.key = el.value.trim(); guardarIA(); }
@@ -3568,6 +3927,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#sheet'
   const t0 = Date.now();
   try { $('#splash-logo').src = LOGO; $('#hdr-logo').src = LOGO; } catch {}
   await cargar(); await cargarIA();
+  try { aplicarCentral(); } catch (e) { console.error(e); }
   try { const em = window.Android && Android.web && GW.ls('email'); if (em && !(await correoPermitido(em))) { Android.logoutSilencioso(); loginEstado = { cargando: false, msg: `La cuenta ${em} no tiene acceso. ${textoAcceso()}`, config: false }; } } catch {}
   try { pintarLogin(); } catch {}
   try { const p = perfil(); if (p && !p.name && Android.refreshProfile) Android.refreshProfile(); } catch {}
@@ -3602,6 +3962,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#sheet'
   } catch (e) { console.error(e); }
   activarAtrasOS();
   setTimeout(() => revisarFichas(true), 5000);
+  setTimeout(() => publicarResumen(), 9000); setInterval(() => { if (document.visibilityState === 'visible') publicarResumen(); }, 120000);
   setInterval(() => { if (document.visibilityState !== 'visible') return; revisarFichas(); if (modoAdmin && !ADM.cargando && Date.now() - ADM.fecha > 110000) admCargar(); }, 30000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { setTimeout(() => revisarFichas(true), 3000); if (modoAdmin) setTimeout(admCargar, 1000); } });
   const revisarIA = () => { if ((!iaLista() || !IA.propia) && !syncCorriendo) ofrecerClaveIA(); };

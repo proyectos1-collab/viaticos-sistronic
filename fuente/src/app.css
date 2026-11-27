@@ -389,3 +389,40 @@ input[readonly] { background: var(--surface-2); color: var(--muted); }
 .tipo-opc .item .t, .tipo-opc .item .s { display: block; width: 100%; min-width: 0; white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; line-height: 1.35; }
 .os-volver { margin: 0 0 8px; }
 .os-volver .btn { width: 100%; font-weight: 700; border-color: var(--accent); color: var(--accent); }
+/* Administración (v59) */
+.adm-menu .t { font-weight: 700; }
+.adm-menu .s { grid-column: 1 / -1; }
+.adm-menu .a { color: var(--muted); font-size: 20px; line-height: 1; }
+.grid3 { display: grid; grid-template-columns: 1.5fr .8fr 1.7fr; gap: 8px; }
+.grid3 .field > span { font-size: 11px; }
+.adm-logo { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.adm-logo img { max-width: 150px; max-height: 64px; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 6px; }
+.item.usr { cursor: default; }
+.item.usr .t { font-weight: 700; }
+.item.usr .s { overflow-wrap: anywhere; }
+.item.usr-bloq { opacity: .75; border-color: #f5b5b5; background: #fff6f6; }
+.adm-kpis-ant { grid-template-columns: repeat(2, 1fr); }
+.adm-kpis-ant > div:first-child { grid-column: 1 / -1; }
+.adm-kpis-ant .warn { background: #fdecec; }
+.adm-kpis-ant .warn b { color: #b3121f; }
+.item.ant-usr { display: block; padding: 0; cursor: default; overflow: hidden; }
+.ant-usr-h { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; width: 100%; padding: 10px 12px; background: none; border: 0; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.ant-usr-h .t { font-weight: 700; }
+.ant-usr-h .a { font-weight: 700; }
+.item.ant-usr.tarde { border-color: #e9a0a6; border-left: 4px solid #e20214; }
+.item.ant-usr.tarde .ant-usr-h .a { color: #b3121f; }
+.ant-det { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 6px; }
+.ant-vj { background: var(--surface-2); border-radius: 10px; padding: 8px 10px; min-width: 0; }
+.ant-vj.tarde { background: #fdecec; }
+.ant-vj b, .ant-vj small { display: block; overflow-wrap: anywhere; }
+.ant-vj small { color: var(--muted); }
+.ant-vj-n { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 13px; margin-top: 4px; }
+.note.rec-aviso { background: #fdecec; color: #8a1010; margin-bottom: 12px; }
+.cp-pub { margin-bottom: 12px; gap: 8px; }
+.cp-pub.ok { opacity: .9; }
+@media (prefers-color-scheme: dark) {
+  .item.usr-bloq { background: #3a1c1f; border-color: #6b2a30; }
+  .adm-kpis-ant .warn, .ant-vj.tarde, .note.rec-aviso { background: #3a1c1f; color: #ffb4b4; }
+  .adm-kpis-ant .warn b { color: #ffb4b4; }
+}
+.item.usr .s, .ant-usr-h .s, .adm-menu .s { white-space: normal; }
