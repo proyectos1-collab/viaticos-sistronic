@@ -2637,7 +2637,7 @@ async function guardarAprobadores(lista) {
     const ex = (await GW.api('GET', `${DRIVE}?fields=files(id)&q=${encodeURIComponent(q)}`)).files || [];
     let actual = {}; if (ex[0]) { try { actual = await GW.api('GET', `${DRIVE}/${ex[0].id}?alt=media`); } catch { actual = central(); } }
     const datos = { ...actual, aprobadores: nueva, admin: ADMIN_CORREO, actualizado: new Date().toISOString() };
-    const b = 'aprob' + Date.now(), meta = ex[0] ? { name: 'Aprobadores de viáticos.json' } : { name: 'Aprobadores de viáticos.json', appProperties: { viaticosAprobadores: '1' }, parents: [await GW.carpeta(FICHAS_CARPETA, 'root')] };
+    const b = 'aprob' + Date.now(), meta = ex[0] ? { name: 'Aprobadores de viáticos.json' } : { name: 'Aprobadores de viáticos.json', appProperties: { viaticosAprobadores: '1' }, parents: [await carpetaSistema()] };
     const body = new Blob([`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: application/json\r\n\r\n`, JSON.stringify(datos), `\r\n--${b}--`]);
     const r = await GW.api(ex[0] ? 'PATCH' : 'POST', `https://www.googleapis.com/upload/drive/v3/files${ex[0] ? '/' + ex[0].id : ''}?uploadType=multipart&fields=id`, body, 'multipart/related; boundary=' + b);
     aprobArchivo = r.id;
@@ -2670,7 +2670,36 @@ function vAprobadoresCfg() {
   </div>`;
 }
 
-const FICHAS_CARPETA = 'Viáticos Sistronic - fichas de aprobación (no borrar)';
+const FICHAS_CARPETA = 'Viáticos Sistronic - fichas de aprobación (no borrar)'; // nombre viejo (en la raíz de Mi unidad)
+/* Archivos internos que se comparten (fichas, listas, resumen): Google no deja ocultar archivos compartidos, así que van
+   en una subcarpeta dentro de la carpeta propia "Viáticos Sistronic" (nunca en una carpeta compartida). */
+const SISTEMA_CARPETA = 'Sistema de la app (no borrar)';
+const carpetaPropia = () => { const c = driveCfg(); return (!c.carpetaId && String(c.carpeta || '').trim()) || 'Viáticos Sistronic'; };
+let sistemaListo = null;
+function carpetaSistema() {
+  if (!sistemaListo) sistemaListo = (async () => { await migrarCarpetaSistema(); return GW.carpeta(SISTEMA_CARPETA, await GW.carpeta(carpetaPropia(), 'root')); })().catch(e => { sistemaListo = null; throw e; });
+  return sistemaListo;
+}
+// Mueve la carpeta vieja de la raíz a "Viáticos Sistronic › Sistema de la app (no borrar)". Los archivos no cambian (mismos permisos).
+async function migrarCarpetaSistema() {
+  const k = 'sistema:migrado:' + correoActual(); try { if (localStorage.getItem(k)) return; } catch {}
+  const q = s => encodeURIComponent(s);
+  const viejas = (await GW.api('GET', `${DRIVE}?fields=files(id)&q=${q(`name = '${GW.q(FICHAS_CARPETA)}' and mimeType = 'application/vnd.google-apps.folder' and 'root' in parents and 'me' in owners and trashed = false`)}`)).files || [];
+  if (viejas.length) {
+    const padre = await GW.carpeta(carpetaPropia(), 'root');
+    const ya = (await GW.api('GET', `${DRIVE}?fields=files(id)&q=${q(`name = '${GW.q(SISTEMA_CARPETA)}' and mimeType = 'application/vnd.google-apps.folder' and '${padre}' in parents and trashed = false`)}`)).files || [];
+    for (const [i, v] of viejas.entries()) {
+      if (!ya.length && i === 0) { // la primera se mueve y se renombra
+        await GW.api('PATCH', `${DRIVE}/${v.id}?addParents=${padre}&removeParents=root&fields=id`, JSON.stringify({ name: SISTEMA_CARPETA }), 'application/json; charset=UTF-8');
+        GW.ls('folder:' + padre + ':' + SISTEMA_CARPETA, v.id); ya.push(v); continue;
+      }
+      const hijos = (await GW.api('GET', `${DRIVE}?pageSize=500&fields=files(id)&q=${q(`'${v.id}' in parents and trashed = false`)}`)).files || [];
+      for (const h of hijos) await GW.api('PATCH', `${DRIVE}/${h.id}?addParents=${ya[0].id}&removeParents=${v.id}&fields=id`, '{}', 'application/json; charset=UTF-8');
+      await GW.api('PATCH', `${DRIVE}/${v.id}?fields=id`, JSON.stringify({ trashed: true }), 'application/json; charset=UTF-8');
+    }
+  }
+  try { localStorage.setItem(k, '1'); } catch {}
+}
 const DRIVE = 'https://www.googleapis.com/drive/v3/files';
 let modoAdmin = false;
 function leerModoAdmin() { let m = ''; try { m = localStorage.getItem('admin:modo:' + correoActual()) || ''; } catch {} modoAdmin = esAdmin() && (m ? m === 'aprob' : !esAdminPrincipal()); }
@@ -2711,7 +2740,7 @@ async function publicarFicha(d) {
     datos.envios = (Number(prev.envios) || 0) + 1;
     const props = { viaticosFicha: '1', fichaId, viajeId: datos.viajeId, corteId: datos.corteId, clase: datos.clase, estado: 'pendiente', enviado: datos.enviado, envios: String(datos.envios), nota: '', decididoPor: '', decididoEn: '' };
     const nombre = `Ficha - ${datos.tipoLeg} - ${datos.servicios ? SERV : 'COT ' + (datos.cot || 's-n')} - ${datos.trabajador || datos.email}.json`.replace(/[\\/:*?"<>|]+/g, ' ').slice(0, 150);
-    const b = 'ficha' + Date.now(), meta = ex[0] ? { name: nombre, appProperties: props } : { name: nombre, appProperties: props, parents: [await GW.carpeta(FICHAS_CARPETA, 'root')] };
+    const b = 'ficha' + Date.now(), meta = ex[0] ? { name: nombre, appProperties: props } : { name: nombre, appProperties: props, parents: [await carpetaSistema()] };
     const body = new Blob([`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: application/json\r\n\r\n`, JSON.stringify(datos), `\r\n--${b}--`]);
     const r = await GW.api(ex[0] ? 'PATCH' : 'POST', `https://www.googleapis.com/upload/drive/v3/files${ex[0] ? '/' + ex[0].id : ''}?uploadType=multipart&fields=id`, body, 'multipart/related; boundary=' + b);
     const yo = correoActual(), para = aprobadores().filter(c => c !== yo);
@@ -2879,7 +2908,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '59 (27/11/2026)';
+const APP_VERSION = '60 (27/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
@@ -3065,7 +3094,7 @@ async function guardarExternos(lista) {
   try {
     const ex = (await GW.api('GET', `${DRIVE}?fields=files(id)&q=${encodeURIComponent(Q_EXT + " and 'me' in owners")}`)).files || [];
     const datos = { externos: nueva, admin: ADMIN_CORREO, actualizado: new Date().toISOString() };
-    const b = 'ext' + Date.now(), meta = ex[0] ? { name: EXT_NOMBRE } : { name: EXT_NOMBRE, appProperties: { viaticosAccesos: '1' }, parents: [await GW.carpeta(FICHAS_CARPETA, 'root')] };
+    const b = 'ext' + Date.now(), meta = ex[0] ? { name: EXT_NOMBRE } : { name: EXT_NOMBRE, appProperties: { viaticosAccesos: '1' }, parents: [await carpetaSistema()] };
     const body = new Blob([`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: application/json\r\n\r\n`, JSON.stringify(datos), `\r\n--${b}--`]);
     const r = await GW.api(ex[0] ? 'PATCH' : 'POST', `https://www.googleapis.com/upload/drive/v3/files${ex[0] ? '/' + ex[0].id : ''}?uploadType=multipart&fields=id`, body, 'multipart/related; boundary=' + b);
     const fallos = [];
@@ -3177,7 +3206,7 @@ async function guardarCentral(parcial) {
   if (ex[0]) { try { actual = await GW.api('GET', `${DRIVE}/${ex[0].id}?alt=media`); } catch {} }
   const datos = { ...actual, ...limpiarCentral({ ...limpiarCentral(actual), ...parcial }), aprobadores: Array.isArray(actual.aprobadores) ? actual.aprobadores : listaAprob(), admin: ADMIN_CORREO, actualizado: new Date().toISOString() };
   for (const k of Object.keys(parcial)) if (parcial[k] == null) delete datos[k];
-  const b = 'cen' + Date.now(), meta = ex[0] ? { name: 'Aprobadores de viáticos.json' } : { name: 'Aprobadores de viáticos.json', appProperties: { viaticosAprobadores: '1' }, parents: [await GW.carpeta(FICHAS_CARPETA, 'root')] };
+  const b = 'cen' + Date.now(), meta = ex[0] ? { name: 'Aprobadores de viáticos.json' } : { name: 'Aprobadores de viáticos.json', appProperties: { viaticosAprobadores: '1' }, parents: [await carpetaSistema()] };
   const body = new Blob([`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: application/json\r\n\r\n`, JSON.stringify(datos), `\r\n--${b}--`]);
   const r = await GW.api(ex[0] ? 'PATCH' : 'POST', `https://www.googleapis.com/upload/drive/v3/files${ex[0] ? '/' + ex[0].id : ''}?uploadType=multipart&fields=id`, body, 'multipart/related; boundary=' + b);
   aprobArchivo = r.id;
@@ -3231,7 +3260,7 @@ async function publicarResumen(forzar) {
   try {
     const datos = { ...d, email, ultima: new Date().toISOString() };
     const ex = (await GW.api('GET', `${DRIVE}?fields=files(id)&q=${encodeURIComponent(Q_RES + " and 'me' in owners")}`)).files || [];
-    const b = 'res' + Date.now(), nombre = 'Resumen de viáticos (no borrar).json', meta = ex[0] ? { name: nombre } : { name: nombre, appProperties: { viaticosResumen: '1' }, parents: [await GW.carpeta(FICHAS_CARPETA, 'root')] };
+    const b = 'res' + Date.now(), nombre = 'Resumen de viáticos (no borrar).json', meta = ex[0] ? { name: nombre } : { name: nombre, appProperties: { viaticosResumen: '1' }, parents: [await carpetaSistema()] };
     const body = new Blob([`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: application/json\r\n\r\n`, JSON.stringify(datos), `\r\n--${b}--`]);
     const r = await GW.api(ex[0] ? 'PATCH' : 'POST', `https://www.googleapis.com/upload/drive/v3/files${ex[0] ? '/' + ex[0].id : ''}?uploadType=multipart&fields=id`, body, 'multipart/related; boundary=' + b);
     if (email !== ADMIN_CORREO && prev.c !== r.id) { if (await permiso(r.id, { role: 'reader', type: 'user', emailAddress: ADMIN_CORREO })) prev.c = r.id; }
@@ -3962,6 +3991,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#sheet'
   } catch (e) { console.error(e); }
   activarAtrasOS();
   setTimeout(() => revisarFichas(true), 5000);
+  setTimeout(() => { if (enAndroidGoogle() && GW.valido()) carpetaSistema().catch(() => {}); }, 7000);
   setTimeout(() => publicarResumen(), 9000); setInterval(() => { if (document.visibilityState === 'visible') publicarResumen(); }, 120000);
   setInterval(() => { if (document.visibilityState !== 'visible') return; revisarFichas(); if (modoAdmin && !ADM.cargando && Date.now() - ADM.fecha > 110000) admCargar(); }, 30000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { setTimeout(() => revisarFichas(true), 3000); if (modoAdmin) setTimeout(admCargar, 1000); } });
