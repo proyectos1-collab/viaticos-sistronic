@@ -457,3 +457,5 @@ input:disabled, select:disabled { opacity: .7; }
 .vivo.err { border-color: #f2b8b5; background: #fdeeed; color: #8c1d18; }
 .vivo .vivo-btn { padding: 4px 10px; min-height: 0; font-size: 12px; }
 @media (prefers-color-scheme: dark) { .vivo.ok { background: #12301d; color: #a8e2bb; border-color: #245a36; } .vivo.pend { background: #33290d; color: #f1d79a; border-color: #5c4a14; } .vivo.err { background: #3a1513; color: #f2b8b5; border-color: #6b2622; } }
+/* v65: anticipo usado en otros proyectos */
+.kpi .usado-l { opacity: .9; font-size: 12px; margin-top: 4px; }

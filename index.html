@@ -468,6 +468,8 @@ input:disabled, select:disabled { opacity: .7; }
 .vivo.err { border-color: #f2b8b5; background: #fdeeed; color: #8c1d18; }
 .vivo .vivo-btn { padding: 4px 10px; min-height: 0; font-size: 12px; }
 @media (prefers-color-scheme: dark) { .vivo.ok { background: #12301d; color: #a8e2bb; border-color: #245a36; } .vivo.pend { background: #33290d; color: #f1d79a; border-color: #5c4a14; } .vivo.err { background: #3a1513; color: #f2b8b5; border-color: #6b2622; } }
+/* v65: anticipo usado en otros proyectos */
+.kpi .usado-l { opacity: .9; font-size: 12px; margin-top: 4px; }
 
 :root{padding-top:env(safe-area-inset-top,0px)}
 [hidden]{display:none!important}
@@ -606,11 +608,20 @@ const anticiposYMov = v => [...anticiposDe(v), ...movimientosAnt(v)];
 const prestadoAnt = v => -movimientosAnt(v).filter(a => a.mov === 'usado').reduce((t, a) => t + a.valor, 0); // positivo
 const recibidoAbierto = v => sum(v.gastos.filter(g => g.antDe && !g.corte), g => Number(g.antMonto) || 0);
 function totalesAnticipo(v) {
-  const l = anticiposYMov(v), t = { total: 0, empleado: 0, tarjeta: 0, n: anticiposDe(v).length };
+  const l = anticiposYMov(v).filter(a => a.mov !== 'usado'), t = { total: 0, empleado: 0, tarjeta: 0, n: anticiposDe(v).length };
   for (const a of l) { const x = Number(a.valor) || 0; t.total += x; t[a.destino === 'tarjeta' ? 'tarjeta' : 'empleado'] += x; }
   return t;
 }
 const sincAnticipo = v => { v.anticipo = totalesAnticipo(v).total; };
+// Solo los anticipos que de verdad se pidieron (sin lo recibido de otro proyecto): para totales generales sin contar doble
+const anticipoReal = v => sum(anticiposDe(v), a => a.valor);
+/* Lo que otros proyectos tomaron del anticipo de este: se legaliza aquí como una línea más ("Anticipo usado en gastos de…").
+   Va en lo pendiente por legalizar (no en los cortes ya hechos). */
+function usadoLineas(v) {
+  if (!v || v._corte || !S) return [];
+  const v0 = S.viajes.find(x => x.id === v.id); if (!v0) return [];
+  return movimientosAnt(v0).filter(a => a.mov === 'usado' && a.valor < 0).map(a => ({ ref: a.ref, fecha: a.fecha, valor: -a.valor, d: 'Anticipo usado en gastos de ' + nomViaje(S.viajes.find(x => x.id === a.ref)) }));
+}
 const recalcAnticipos = () => { if (S && S.viajes) S.viajes.forEach(sincAnticipo); };
 // Saldo libre de un viaje (lo que no se ha gastado ni prestado), sin contar el gasto que se está editando
 function saldoLibre(x, sinId) { const g0 = x.gastos.filter(g => g.id !== sinId), y = { ...x, gastos: g0 }; return indicadores(vistaAbierta(y)).saldo; }
@@ -630,7 +641,7 @@ function asignarAnticipo(g, v) {
 const textoAntDe = g => { const x = S.viajes.find(y => y.id === g.antDe); return `💳 ${Number(g.antMonto) < Number(g.valor) ? fmtCOP(g.antMonto) + ' pagados' : 'Pagado'} con el anticipo de ${nomViaje(x)}`; };
 function vTotalGeneral() {
   if (!S || !S.viajes.length) return '';
-  let ant = 0, con = 0; for (const x of S.viajes) { ant += Number(x.anticipo) || 0; con += empleadoTotal(x.gastos); }
+  let ant = 0, con = 0; for (const x of S.viajes) { ant += anticipoReal(x); con += empleadoTotal(x.gastos); }
   return `<div class="tot-gen no-print"><div class="tg-t">Todos sus viajes y servicios (${S.viajes.length})</div><div class="tg-n"><div><small>Anticipos</small><b class="num">${fmtCOP(ant)}</b></div><div><small>Consumido</small><b class="num">${fmtCOP(con)}</b></div><div class="${ant - con < 0 ? 'neg' : ''}"><small>Saldo</small><b class="num">${fmtCOP(ant - con)}</b></div></div></div>`;
 }
 let antQuitando = '';
@@ -648,7 +659,7 @@ function vAnticipos(v) {
     <button type="button" class="btn block" data-act="ant-agregar">+ Agregar anticipo</button>
     <div class="ant-tot" id="ant-tot">${vAntTot(v)}</div></div>`;
 }
-function vAntTot(v) { const t = totalesAnticipo(v); return `<div><span>Total anticipos</span><b class="num">${fmtCOP(t.total)}</b></div><div><span>💳 Cuenta del empleado</span><b class="num">${fmtCOP(t.empleado)}</b></div><div><span>🛠️ Tarjeta de ingeniería</span><b class="num">${fmtCOP(t.tarjeta)}</b></div>`; }
+function vAntTot(v) { const t = totalesAnticipo(v); return `<div><span>Total anticipos</span><b class="num">${fmtCOP(t.total)}</b></div><div><span>💳 Cuenta del empleado</span><b class="num">${fmtCOP(t.empleado)}</b></div><div><span>🛠️ Tarjeta de ingeniería</span><b class="num">${fmtCOP(t.tarjeta)}</b></div>${(() => { const u = sum(usadoLineas(v), x => x.valor); return u ? `<div><span>↪ Usado en otros proyectos (se legaliza aquí como una línea)</span><b class="num">${fmtCOP(u)}</b></div>` : ''; })()}`; }
 let vistaGastos = 'fecha';
 function nuevoGasto(arr) {
   const [fecha, concepto, sub, proveedor, desc, valor, pagadoPor, factura, soporte, obs] = arr;
@@ -700,14 +711,14 @@ function indicadores(v) {
   const gs = conValor(v);
   const emp = gs.filter(g => g.pagadoPor !== 'Sistronic');
   const anticipo = Number(v.anticipo) || 0;
-  const gastado = sum(emp, g => g.valor);
+  const gastado = sum(emp, g => g.valor), usado = sum(usadoLineas(v), a => a.valor);
   return {
-    anticipo, gastado, saldo: anticipo - gastado,
+    anticipo, gastado, usado, saldo: anticipo - gastado - usado,
     sistronic: sum(gs.filter(g => g.pagadoPor === 'Sistronic'), g => g.valor),
     conSoporte: sum(emp.filter(g => g.soporte === 'Sí'), g => g.valor),
     pendiente: sum(gs.filter(g => estado(g) === 'PENDIENTE'), g => g.valor),
     total: sum(gs, g => g.valor),
-    ejecutado: anticipo ? gastado / anticipo : 0
+    ejecutado: anticipo ? (gastado + usado) / anticipo : 0
   };
 }
 function resumen(v) {
@@ -762,11 +773,12 @@ function legalizacion(v) {
     d: o.d, n: o.n, t: o.t, unit: o.n ? o.t / o.n : 0,
     f: o.f.size === 0 ? 'Sin factura' : o.f.size === 1 ? [...o.f][0] : `${o.f.size} facturas`
   }));
+  for (const u of usadoLineas(v)) lineas.push({ d: u.d, n: 1, t: u.valor, unit: u.valor, f: 'Traslado', usado: true });
   const total = sum(lineas.slice(0, MAX_LINEAS_FO), l => l.t);
   const I = indicadores(v);
   let aviso, ok = false;
   if (lineas.length > MAX_LINEAS_FO) aviso = `⚠ ${lineas.length} conceptos: el formato tiene ${MAX_LINEAS_FO} líneas`;
-  else if (total !== I.gastado) aviso = '⚠ Total no cuadra con Control de Gastos';
+  else if (total !== I.gastado + I.usado) aviso = '⚠ Total no cuadra con Control de Gastos';
   else { aviso = '✔ Cuadra con Control de Gastos'; ok = true; }
   return { lineas, total, aviso, ok, anticipo: I.anticipo, diferencia: I.anticipo - total };
 }
@@ -844,7 +856,8 @@ function vGastos(v) {
     <div class="kpi hero ${I.saldo < 0 ? 'neg' : ''}"><div><div class="l">Saldo disponible</div><div class="v num">${fmtCOP(I.saldo)}</div></div>
       <div style="text-align:right"><div class="l">Anticipo</div><div class="num" style="font-weight:700">${fmtCOP(I.anticipo)}</div></div>
       <div class="meter" title="Anticipo ejecutado"><i style="width:${pct}%"></i></div>
-      <div class="l" style="flex-basis:100%">${fmtPct(I.ejecutado)} del anticipo ejecutado · ${diasServicio(v) || 0} días de servicio</div></div>
+      <div class="l" style="flex-basis:100%">${fmtPct(I.ejecutado)} del anticipo ejecutado · ${diasServicio(v) || 0} días de servicio</div>
+      ${I.usado ? `<div class="l usado-l" style="flex-basis:100%">↪ ${usadoLineas(v).map(u => `${esc(u.d.replace('Anticipo usado en gastos de ', ''))}: ${fmtCOP(u.valor)}`).join(' · ')} (usado del anticipo en otros proyectos)</div>` : ''}</div>
     <div class="kpi total-kpi"><div class="l">Total de viáticos gastados</div><div class="v num">${fmtCOP(I.total)}</div><div class="s">${conValor(v).length} gastos · empleado + Sistronic</div></div>
     <div class="kpi"><div class="l">Gastado por empleado</div><div class="v num">${fmtCOP(I.gastado)}</div></div>
     <div class="kpi"><div class="l">Pagado por Sistronic</div><div class="v num">${fmtCOP(I.sistronic)}</div></div>
@@ -987,7 +1000,7 @@ const gastosCorte = (v, c) => v.gastos.filter(g => g.corte === c.id);
 const empleadoTotal = gs => sum(gs.filter(g => g.valor !== '' && g.valor != null && g.pagadoPor !== 'Sistronic'), g => g.valor);
 /* Anticipo y saldo de cada corte, en orden: el saldo de un corte pasa como anticipo al siguiente */
 function cadenaCortes(v) {
-  let disp = (Number(v.anticipo) || 0) + prestadoAnt(v) - recibidoAbierto(v); const out = [];
+  let disp = (Number(v.anticipo) || 0) - recibidoAbierto(v); const out = [];
   for (const c of cortesDe(v)) {
     const anticipo = disp + (Number(c.adicional) || 0), gastado = empleadoTotal(gastosCorte(v, c));
     out.push({ c, anticipo, gastado, saldo: anticipo - gastado });
@@ -1005,7 +1018,7 @@ function vistaAbierta(v) {
   const cs = cortesDe(v); if (!cs.length) return v;
   const ult = cs[cs.length - 1], resto = v.gastos.filter(g => !g.corte);
   const d = parseISO(ult.hasta), sig = d ? toISO(new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1)) : v.inicio;
-  return { ...v, gastos: resto, anticipo: cadenaCortes(v).saldoFinal - prestadoAnt(v) + recibidoAbierto(v), inicio: sig > v.fin ? v.fin : sig, _final: true };
+  return { ...v, gastos: resto, anticipo: cadenaCortes(v).saldoFinal + recibidoAbierto(v), inicio: sig > v.fin ? v.fin : sig, _final: true };
 }
 const corteDeGasto = g => { if (!g.corte) return null; for (const v of S.viajes) { const c = (v.cortes || []).find(x => x.id === g.corte); if (c) return c; } return null; };
 // Legalización enviada (pendiente) o aprobada: el viaje queda bloqueado hasta que el aprobador la devuelva
@@ -2443,7 +2456,7 @@ async function exportarExcel(soloGenerar, vx) {
     if (v.centroCosto) { h1.set('H8', 'Centro de costo:', false, 3); h1.set('I8', v.centroCosto, false, 190); h1.set('J8', '', false, 187); }
     else if (pr) { h1.set('H8', 'Total (proyecto):', false, 3); h1.set('I8', ta.total, false, 189); h1.set('J8', '', false, 187); }
   }
-  const gs = [...v.gastos].sort((a, b) => (a.fecha || '').localeCompare(b.fecha || '')).slice(0, FILAS);
+  const gs = [...v.gastos, ...usadoLineas(v).map(u => ({ fecha: u.fecha, concepto: 'Traslado de anticipo', sub: 'Usado en otro proyecto', proveedor: nomViaje(S.viajes.find(x => x.id === u.ref)), desc: u.d, valor: u.valor, pagadoPor: 'Empleado', factura: '', soporte: 'Excepción', obs: 'Los gastos y sus facturas van en la legalización de ese proyecto' }))].sort((a, b) => (a.fecha || '').localeCompare(b.fecha || '')).slice(0, FILAS);
   let acc = 0;
   for (let i = 0; i < FILAS; i++) {
     const r = 14 + i, g = gs[i];
@@ -2455,7 +2468,7 @@ async function exportarExcel(soloGenerar, vx) {
   }
   // Valores ya calculados (por si se abre en un visor que no recalcula)
   const I = indicadores(v);
-  [['I5', diasServicio(v)], ['B10', I.anticipo], ['D10', I.gastado], ['F10', I.saldo], ['H10', I.sistronic], ['J10', I.conSoporte], ['L10', I.pendiente], ['M10', I.pendiente]].forEach(([r, x]) => h1.set(r, x, true));
+  [['I5', diasServicio(v)], ['B10', I.anticipo], ['D10', I.gastado + I.usado], ['F10', I.saldo], ['H10', I.sistronic], ['J10', I.conSoporte], ['L10', I.pendiente], ['M10', I.pendiente]].forEach(([r, x]) => h1.set(r, x, true));
   if (SOLO_VALORES) h1.aplanar();
   zip.file(p1, h1.xml());
 
@@ -2469,7 +2482,7 @@ async function exportarExcel(soloGenerar, vx) {
     h2.set('C9', totC); h2.set('D9', totC ? 1 : 0);
     h2.set('C10', I.gastado); h2.set('D10', totC ? I.gastado / totC : 0);
     h2.set('C11', I.sistronic); h2.set('D11', totC ? I.sistronic / totC : 0);
-    h2.set('C12', I.anticipo); h2.set('C13', I.anticipo - I.gastado); h2.set('C14', I.anticipo ? I.gastado / I.anticipo : 0); h2.set('C15', I.pendiente);
+    h2.set('C12', I.anticipo); h2.set('C13', I.saldo); h2.set('C14', I.anticipo ? I.gastado / I.anticipo : 0); h2.set('C15', I.pendiente);
     { // Detalle de anticipos del proyecto (fecha, valor y a dónde se consignó), debajo de la gráfica (filas 15 a 34)
       const v0a = S.viajes.find(x => x.id === v.id) || v, la = anticiposYMov(v0a), ta = totalesAnticipo(v0a);
       if (la.length) {
@@ -3476,7 +3489,7 @@ function datosFicha(d) {
     tipoLeg: fin ? `Legalización final (${cortesDe(v0).length} cortes)` : k ? `Legalización parcial (${nombreCorte(k)})` : 'Legalización de viáticos',
     servicios: esServ(v0), trabajador: v0.trabajador || '', cedula: v0.cedula || '', email: correoActual(), cliente: v0.cliente || '', cot: v0.cot || '', os: v0.os || '', servicio: v0.servicio || '', ciudad: v0.ciudad || '',
     inicio: v.inicio || '', fin: v.fin || '', enviado: new Date().toISOString(), archivos: [...(d.archivos || []), ...pdfSubidos.map(p => ({ ...p, pdf: true }))], carpetaLink: d.carpetaLink || '', ruta: d.ruta || '' };
-  { const ta = totalesAnticipo(v0); base.anticipos = anticiposYMov(v0).map(a => ({ fecha: a.fecha || '', valor: Number(a.valor) || 0, destino: a.destino === 'tarjeta' ? 'tarjeta' : 'empleado', nota: a.nota || '' })); base.antEmpleado = ta.empleado; base.antTarjeta = ta.tarjeta; }
+  { const ta = totalesAnticipo(v0); base.anticipos = anticiposYMov(v0).filter(a => a.mov !== 'usado').map(a => ({ fecha: a.fecha || '', valor: Number(a.valor) || 0, destino: a.destino === 'tarjeta' ? 'tarjeta' : 'empleado', nota: a.nota || '' })); base.antEmpleado = ta.empleado; base.antTarjeta = ta.tarjeta; }
   base.centro = v0.centroCosto || '';
   base.nGastos = conValor(v).length; base.nFotos = v.gastos.filter(g => g.foto).length;
   base.sistronic = sum(conValor(v).filter(g => g.pagadoPor === 'Sistronic'), g => g.valor);
@@ -3671,7 +3684,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '64 (27/11/2026)';
+const APP_VERSION = '65 (27/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
@@ -3984,7 +3997,8 @@ const Q_RES = "appProperties has { key='viaticosResumen' and value='1' } and tra
 const EST_REV = { enviado: 'enviada', aprobado: 'aprobada', devuelto: 'devuelta' };
 // Estado de los anticipos de un viaje: cuánto se dio, cuánto está legalizado (aprobado) y desde cuándo hay saldo sin legalizar
 function estadoAnticipos(v) {
-  const ta = totalesAnticipo(v), ks = cortesDe(v), rv = v.revision && v.revision.estado;
+  const ta = { ...totalesAnticipo(v) }; { const r = anticipoReal(v); ta.empleado = sum(anticiposDe(v).filter(a => a.destino !== 'tarjeta'), a => a.valor); ta.tarjeta = r - ta.empleado; ta.total = r; }
+  const ks = cortesDe(v), rv = v.revision && v.revision.estado;
   let legalizado = 0, desdeCorte = '';
   if (rv === 'aprobado') legalizado = ta.total;
   else for (const c of ks) if (c.revision && c.revision.estado === 'aprobado') { legalizado += empleadoTotal(gastosCorte(v, c)); if (c.hasta > desdeCorte) desdeCorte = c.hasta; }
