@@ -437,6 +437,11 @@ input[readonly] { background: var(--surface-2); color: var(--muted); }
   .adm-kpis-ant .warn b { color: #ffb4b4; }
 }
 .item.usr .s, .ant-usr-h .s, .adm-menu .s { white-space: normal; }
+/* Datos del viaje (v61) */
+.g-viaje { margin: -4px 0 10px; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.g-viaje b { color: var(--fg); }
+.note.falta-datos { margin-bottom: 12px; }
+#nv-form .ant-box { margin-top: 4px; }
 
 :root{padding-top:env(safe-area-inset-top,0px)}
 [hidden]{display:none!important}
@@ -758,7 +763,7 @@ function render() {
   $('#tabs').innerHTML = TABS.map(([k, l, i]) => `<button role="tab" aria-selected="${tab === k}" data-tab="${k}">${i}<span>${l}</span></button>`).join('');
   $('#fab').hidden = !(tab === 'gastos' || tab === 'facturas');
   const main = $('#main');
-  main.innerHTML = vVolverOS() + `<div id="sync-chip">${syncChipHTML()}</div>` + (tab === 'config' || tab === 'conceptos' || tab === 'admin' ? '' : vAdmSwitch()) + ({ gastos: vGastos, resumen: vResumen, facturas: vFacturas, legal: vLegal, viaje: vViaje, config: vConfig, conceptos: vConceptos, admin: vAdmin })[tab](v);
+  main.innerHTML = vVolverOS() + `<div id="sync-chip">${syncChipHTML()}</div>` + (tab === 'config' || tab === 'conceptos' || tab === 'admin' ? '' : vAdmSwitch()) + (tab === 'legal' ? vFaltanDatos(v) : '') + ({ gastos: vGastos, resumen: vResumen, facturas: vFacturas, legal: vLegal, viaje: vViaje, config: vConfig, conceptos: vConceptos, admin: vAdmin })[tab](v);
   pintarAvatar();
   main.focus({ preventScroll: true });
 }
@@ -767,7 +772,7 @@ function vGastos(v) {
   const I = indicadores(v);
   const pct = Math.min(100, Math.max(0, I.ejecutado * 100));
   const nDup = gruposDuplicados().filter(gr => gr.some(x => x.v.id === v.id)).length;
-  let h = `${vRecordatorio()}${nDup ? `<div class="note dup" style="margin-bottom:12px">⛔ <b>${nDup === 1 ? 'Hay una factura registrada más de una vez' : `Hay ${nDup} facturas registradas más de una vez`}</b> en este viaje.<div class="row" style="margin-top:8px"><button class="btn dup-btn" data-act="dup-abrir">Revisar y eliminar repetidas</button></div></div>` : ''}<h2>Control de gastos</h2>
+  let h = `${vFaltanDatos(v)}${vRecordatorio()}${nDup ? `<div class="note dup" style="margin-bottom:12px">⛔ <b>${nDup === 1 ? 'Hay una factura registrada más de una vez' : `Hay ${nDup} facturas registradas más de una vez`}</b> en este viaje.<div class="row" style="margin-top:8px"><button class="btn dup-btn" data-act="dup-abrir">Revisar y eliminar repetidas</button></div></div>` : ''}<h2>Control de gastos</h2>
   <div class="kpis">
     <div class="kpi hero ${I.saldo < 0 ? 'neg' : ''}"><div><div class="l">Saldo disponible</div><div class="v num">${fmtCOP(I.saldo)}</div></div>
       <div style="text-align:right"><div class="l">Anticipo</div><div class="num" style="font-weight:700">${fmtCOP(I.anticipo)}</div></div>
@@ -1569,6 +1574,7 @@ function pintarGasto(anim) {
   const e = estado({ ...g, valor: 1 });
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet ${anim ? 'anim' : ''}" id="g-form" autocomplete="off">
     <div class="sheet-head"><h3>${g._nuevo ? 'Registrar gasto' : 'Editar gasto'}</h3><button type="button" class="x" data-close="1" aria-label="Cerrar">×</button></div>
+    <div class="g-viaje">📁 ${g._nuevo ? 'Va al viaje' : 'Viaje'}: <b>${esc(tituloViaje(v).replace('🧰 ', ''))}</b> · ${fmtFecha(v.inicio)} a ${fmtFecha(v.fin)}</div>
     <div class="form">
       <div class="field"><span>Foto de la factura${iaLista() ? ' · se llena sola con IA' : ' (opcional)'}</span>
         <input id="g-file" type="file" accept="image/*" capture="environment" hidden>
@@ -2138,6 +2144,63 @@ function comprimirFoto(file) {
 }
 
 /* ---------- Viajes ---------- */
+
+/* ---------- Datos del viaje: se piden al crear un viaje y se avisa si faltan ---------- */
+const NV_CAMPOS = { trabajador: 'Trabajador', cedula: 'Cédula', cliente: 'Cliente', servicio: 'Proyecto / servicio', cot: 'COT', ciudad: 'Ciudad', inicio: 'Fecha de inicio', fin: 'Fecha de fin', centroCosto: 'Centro de costo' };
+function camposObligatorios(sv) { const l = sv ? ['trabajador', 'cedula', 'inicio', 'fin'] : ['trabajador', 'cedula', 'cliente', 'servicio', 'cot', 'ciudad', 'inicio', 'fin']; if (centrosCosto().length) l.push('centroCosto'); return l; }
+function faltanDatos(v, sv = esServ(v)) {
+  const f = camposObligatorios(sv).filter(k => !String(v[k] || '').trim()).map(k => NV_CAMPOS[k]);
+  if (v.inicio && v.fin && v.fin < v.inicio) f.push('la fecha de fin es antes del inicio');
+  return f;
+}
+let NV = null;
+function abrirFormViaje(tipo, v) {
+  const P = S.perfil || {}, ult = [...S.viajes].reverse().find(x => x.trabajador) || {};
+  NV = v ? { editar: v.id, tipo: esServ(v) ? 'servicios' : 'proyecto', ...Object.fromEntries(Object.keys(NV_CAMPOS).map(k => [k, v[k] || ''])), os: esServ(v) ? '' : v.os || '' }
+    : { editar: '', tipo, trabajador: P.trabajador || ult.trabajador || '', cedula: P.cedula || ult.cedula || '', cliente: '', servicio: '', cot: '', os: '', ciudad: '', inicio: todayISO(), fin: todayISO(), centroCosto: '', antValor: '', antDestino: 'empleado', antFecha: todayISO() };
+  pintarFormViaje(true);
+}
+function pintarFormViaje(anim) {
+  const n = NV, sv = n.tipo === 'servicios', req = camposObligatorios(sv);
+  const f = (k, l, t = 'text', extra = '') => `<label class="field"><span>${l}${req.includes(k) ? ' *' : ''}</span><input type="${t}" data-nv="${k}" value="${esc(n[k] || '')}" ${extra}></label>`;
+  $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet ${anim ? 'anim' : ''}" id="nv-form" autocomplete="off">
+    <div class="sheet-head"><h3>${n.editar ? 'Datos del viaje' : sv ? 'Nueva legalización de servicios' : 'Nuevo viaje'}</h3><button type="button" class="x" data-close="1" aria-label="Cerrar">×</button></div>
+    <div class="form">
+      <p class="hint" style="margin:0">${n.editar ? 'Complete los datos que faltan. Los campos con * son obligatorios.' : 'Llene los datos antes de registrar gastos. Los campos con * son obligatorios.'}</p>
+      <div class="grid2">${f('trabajador', 'Trabajador')}${f('cedula', 'Cédula', 'text', 'inputmode="numeric"')}</div>
+      ${sv ? '' : f('cliente', 'Cliente / Empresa', 'text', 'list="dl-clientes"') + f('servicio', 'Proyecto / servicio', 'text', 'list="dl-proyectos"')}
+      ${sv ? '' : `<div class="grid2">${f('cot', 'COT / Orden de compra')}${f('os', 'OS No. (opcional)')}</div>`}
+      ${f('ciudad', 'Ciudad')}
+      <div class="grid2">${f('inicio', 'Fecha inicio', 'date')}${f('fin', 'Fecha fin', 'date')}</div>
+      ${centrosCosto().length ? `<label class="field"><span>Centro de costo *</span><select data-nv="centroCosto"><option value="">— Elija el centro de costo —</option>${[...new Set([...centrosCosto(), ...(n.centroCosto ? [n.centroCosto] : [])])].map(c => `<option ${c === n.centroCosto ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></label>` : ''}
+      ${n.editar ? '' : `<div class="field ant-box"><span>Anticipo (opcional, puede agregar más después en Viaje)</span>
+        <div class="grid2"><label class="field"><span>Valor</span><input inputmode="numeric" data-money data-nv="antValor" value="${n.antValor ? Number(n.antValor).toLocaleString('es-CO') : ''}" placeholder="$ 0"></label><label class="field"><span>Fecha</span><input type="date" data-nv="antFecha" value="${esc(n.antFecha)}"></label></div>
+        <div class="seg" role="group">${Object.entries(DEST_ANT).map(([k, [ic, tx]]) => `<button type="button" data-act="nv-destino" data-d="${k}" aria-pressed="${n.antDestino === k}">${ic} ${tx}</button>`).join('')}</div></div>`}
+      ${vListasSug()}
+      <div class="note" id="nv-falta" ${faltanDatos(n, sv).length ? '' : 'hidden'}>Falta: ${esc(faltanDatos(n, sv).join(', '))}</div>
+      <button class="btn primary block" type="submit" id="nv-ok" ${faltanDatos(n, sv).length ? 'disabled' : ''}>${n.editar ? 'Guardar datos' : sv ? 'Crear legalización' : 'Crear viaje'}</button>
+    </div></form></div>`;
+}
+function nvRevisar() { const l = faltanDatos(NV, NV.tipo === 'servicios'), b = $('#nv-ok'), m = $('#nv-falta'); if (b) b.disabled = !!l.length; if (m) { m.hidden = !l.length; m.textContent = 'Falta: ' + l.join(', '); } }
+async function guardarFormViaje() {
+  const n = NV; if (!n || faltanDatos(n, n.tipo === 'servicios').length) return;
+  const datos = {}; for (const k of [...Object.keys(NV_CAMPOS), 'os']) if (k in n) datos[k] = String(n[k] || '').trim();
+  if (n.tipo === 'servicios') { delete datos.cliente; delete datos.servicio; delete datos.cot; delete datos.os; }
+  let v;
+  if (n.editar) { v = S.viajes.find(x => x.id === n.editar); if (!v) return; Object.assign(v, datos); }
+  else {
+    v = nuevoViaje(datos); if (n.tipo === 'servicios') hacerServicios(v, true);
+    const val = Number(n.antValor) || 0; v.anticipos = val > 0 ? [{ id: uid(), fecha: n.antFecha || v.inicio, valor: val, destino: n.antDestino, nota: '' }] : []; sincAnticipo(v);
+    S.viajes.push(v); S.activo = v.id;
+  }
+  S.perfil = Object.assign(S.perfil || {}, { trabajador: datos.trabajador, cedula: datos.cedula });
+  await guardar(); NV = null; cerrarSheet(); if (!n.editar) tab = 'gastos'; render(); window.scrollTo(0, 0);
+  toast(n.editar ? 'Datos del viaje guardados' : `Listo. Ahora está en: ${tituloViaje(v).replace('🧰 ', '')}`, 3500);
+}
+function vFaltanDatos(v) {
+  const l = faltanDatos(v); if (!l.length) return '';
+  return `<div class="note falta-datos no-print">📝 <b>Faltan datos del viaje:</b> ${esc(l.join(', '))}.<div class="row" style="margin-top:8px"><button class="btn" data-act="nv-completar">Completar datos</button></div></div>`;
+}
 function abrirViajes() {
   if (modoAdmin) { ponerModoAdmin(false); render(); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><div class="sheet anim">
@@ -3366,7 +3429,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '60 (27/11/2026)';
+const APP_VERSION = '61 (27/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
@@ -4189,7 +4252,7 @@ document.addEventListener('click', async e => {
   if (t.dataset.close && t.tagName === 'BUTTON') { cerrarSheet(); return; }
   if (t.dataset.tab) { tab = t.dataset.tab; cfgAbierta = false; revDevolviendo = false; corteDevolviendo = null; render(); window.scrollTo(0, 0); return; }
   if (t.dataset.edit) { abrirGasto(t.dataset.edit); return; }
-  if (t.dataset.trip) { S.activo = t.dataset.trip; await guardar(); cerrarSheet(); render(); return; }
+  if (t.dataset.trip) { const cambio = S.activo !== t.dataset.trip; S.activo = t.dataset.trip; await guardar(); cerrarSheet(); render(); if (cambio) { const v = viaje(); toast(`Ahora está en: ${tituloViaje(v).replace('🧰 ', '')} · ${fmtFecha(v.inicio)} a ${fmtFecha(v.fin)}`, 3500); } return; }
   if (t.dataset.ffilt) { filtroFact = t.dataset.ffilt; render(); return; }
   if (t.closest('[data-seg]') && editando) {
     leerFormGasto(); pintarGasto._y = $('#g-form').scrollTop;
@@ -4296,7 +4359,9 @@ document.addEventListener('click', async e => {
     case 'new-trip': $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><div class="sheet anim"><div class="sheet-head"><h3>¿Qué va a legalizar?</h3><button class="x" data-close="1" aria-label="Cerrar">×</button></div>
         <div class="tipo-opc"><button class="item" data-act="new-trip-tipo" data-v="proyecto"><span class="t">📁 Un proyecto</span><span class="s">Un cliente, una COT y una OS. Como siempre.</span></button>
         <button class="item" data-act="new-trip-tipo" data-v="servicios"><span class="t">🧰 Servicios diarios</span><span class="s">Varias órdenes de servicio en la misma legalización. Cada gasto lleva su OS y su cliente.</span></button></div></div></div>`; break;
-    case 'new-trip-tipo': { const v = nuevoViaje(); if (t.dataset.v === 'servicios') hacerServicios(v, true); S.viajes.push(v); S.activo = v.id; await guardar(); cerrarSheet(); tab = 'viaje'; render(); toast(esServ(v) ? 'Legalización de servicios creada' : 'Viaje creado: complete los datos'); break; }
+    case 'new-trip-tipo': abrirFormViaje(t.dataset.v === 'servicios' ? 'servicios' : 'proyecto'); break;
+    case 'nv-destino': NV.antDestino = t.dataset.d; document.querySelectorAll('[data-act="nv-destino"]').forEach(b => b.setAttribute('aria-pressed', b.dataset.d === NV.antDestino)); break;
+    case 'nv-completar': abrirFormViaje(null, viaje()); break;
     case 'tipo-viaje': { const v = viaje(), si = t.dataset.v === 'servicios'; if (si === esServ(v)) break; hacerServicios(v, si); await guardar(); render(); toast(si ? 'Ahora es una legalización de servicios diarios' : 'Ahora es una legalización de proyecto'); break; }
     case 'os-chip': { leerFormGasto(); editando.os = t.dataset.os; editando.osCliente = t.dataset.cli || osClientes()[t.dataset.os] || ''; pintarGasto._y = $('#g-form').scrollTop; pintarGasto(); break; }
     case 'vista-gastos': vistaGastos = t.dataset.v; render(); break;
@@ -4345,10 +4410,11 @@ document.addEventListener('click', async e => {
     }
   }
 });
-document.addEventListener('submit', e => { if (e.target.id === 'g-form') { e.preventDefault(); guardarGasto(!!(e.submitter && e.submitter.dataset.otro)); } if (e.target.id === 'cfg-form') { e.preventDefault(); probarClaveCfg(); } if (e.target.id === 'pv-form') { e.preventDefault(); guardarProveedor(); } if (e.target.id === 'cp-form') { e.preventDefault(); guardarConcepto(); } });
+document.addEventListener('submit', e => { if (e.target.id === 'g-form') { e.preventDefault(); guardarGasto(!!(e.submitter && e.submitter.dataset.otro)); } if (e.target.id === 'cfg-form') { e.preventDefault(); probarClaveCfg(); } if (e.target.id === 'pv-form') { e.preventDefault(); guardarProveedor(); } if (e.target.id === 'cp-form') { e.preventDefault(); guardarConcepto(); } if (e.target.id === 'nv-form') { e.preventDefault(); guardarFormViaje(); } });
 document.addEventListener('input', e => {
   const el = e.target;
   if (el.hasAttribute('data-money')) moneyFormat(el);
+  if (el.dataset.nv && NV) { NV[el.dataset.nv] = el.dataset.nv === 'antValor' ? parseValor(el.value) : el.value; nvRevisar(); }
   if (el.dataset.emp && EMPED) EMPED[el.dataset.emp] = el.dataset.emp === 'nit' ? soloDig(el.value) : el.value;
   if (el.dataset.ant) {
     const v = viaje(), a = anticiposDe(v).find(x => x.id === el.dataset.id);
