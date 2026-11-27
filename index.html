@@ -398,6 +398,8 @@ input[readonly] { background: var(--surface-2); color: var(--muted); }
 /* Hoja "¿Qué va a legalizar?": el texto largo hace salto de línea y no ensancha la hoja */
 .tipo-opc, .tipo-opc .item { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
 .tipo-opc .item .t, .tipo-opc .item .s { display: block; width: 100%; min-width: 0; white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; line-height: 1.35; }
+.os-volver { margin: 0 0 8px; }
+.os-volver .btn { width: 100%; font-weight: 700; border-color: var(--accent); color: var(--accent); }
 
 :root{padding-top:env(safe-area-inset-top,0px)}
 [hidden]{display:none!important}
@@ -674,6 +676,31 @@ const ICON = {
 };
 const TABS = [['gastos', 'Gastos', ICON.gastos], ['resumen', 'Resumen', ICON.resumen], ['facturas', 'Facturas', ICON.facturas], ['legal', 'Legalización', ICON.legal], ['viaje', 'Viaje', ICON.viaje]];
 
+/* ---------- Regreso a la app de Órdenes de servicio ----------
+   Si la app se abrió desde la app de OS (?os=...), el botón atrás primero cierra lo que esté abierto y luego vuelve a la app de OS. */
+const OS_APP_URL = 'https://sistronic-os.web.app/';
+const origenOS = () => { try { return sessionStorage.getItem('origenOS') || ''; } catch { return ''; } };
+function volverAOS() {
+  try { window.close(); } catch {}
+  setTimeout(() => { location.href = OS_APP_URL; }, 350); // si la pestaña no se pudo cerrar (app instalada), abre la app de OS
+}
+let atrasOSListo = false;
+function activarAtrasOS() {
+  if (atrasOSListo || !origenOS()) return; atrasOSListo = true;
+  history.pushState({ viaticosOS: 1 }, '');
+  window.addEventListener('popstate', () => {
+    if (!origenOS()) return;
+    const reponer = () => history.pushState({ viaticosOS: 1 }, '');
+    const scan = document.querySelector('.scan-back'), guia = document.querySelector('.ia-guia-back');
+    if (scan) { const b = scan.querySelector('[data-s="volver"]:not([hidden])') || scan.querySelector('[data-s="cancelar"]'); if (b) b.click(); reponer(); return; }
+    if (guia) { const b = guia.querySelector('[data-g="luego"]'); if (b) b.click(); else guia.remove(); reponer(); return; }
+    if ($('#sheet').innerHTML) { cerrarSheet(); reponer(); return; }
+    if (tab === 'config' || tab === 'conceptos') { tab = 'gastos'; cfgAbierta = false; render(); reponer(); return; }
+    volverAOS();
+  });
+}
+const vVolverOS = () => origenOS() ? `<div class="os-volver no-print"><button type="button" class="btn" data-act="volver-os">← Volver a OS ${esc(origenOS())}</button></div>` : '';
+
 /* ---------- Render ---------- */
 function render() {
   const v = viaje();
@@ -685,7 +712,7 @@ function render() {
     $('#trip-name').textContent = '✅ Aprobaciones';
     $('#trip-sub').textContent = `${n ? n + ' pendiente' + (n === 1 ? '' : 's') : 'Sin pendientes'} · panel de administración`;
     $('#fab').hidden = true;
-    $('#main').innerHTML = `<div id="sync-chip">${syncChipHTML()}</div>` + vAdmSwitch() + vAprobaciones();
+    $('#main').innerHTML = vVolverOS() + `<div id="sync-chip">${syncChipHTML()}</div>` + vAdmSwitch() + vAprobaciones();
     pintarAvatar(); return;
   }
   $('#trip-name').textContent = tituloViaje(v);
@@ -693,7 +720,7 @@ function render() {
   $('#tabs').innerHTML = TABS.map(([k, l, i]) => `<button role="tab" aria-selected="${tab === k}" data-tab="${k}">${i}<span>${l}</span></button>`).join('');
   $('#fab').hidden = !(tab === 'gastos' || tab === 'facturas');
   const main = $('#main');
-  main.innerHTML = `<div id="sync-chip">${syncChipHTML()}</div>` + (tab === 'config' || tab === 'conceptos' ? '' : vAdmSwitch()) + ({ gastos: vGastos, resumen: vResumen, facturas: vFacturas, legal: vLegal, viaje: vViaje, config: vConfig, conceptos: vConceptos })[tab](v);
+  main.innerHTML = vVolverOS() + `<div id="sync-chip">${syncChipHTML()}</div>` + (tab === 'config' || tab === 'conceptos' ? '' : vAdmSwitch()) + ({ gastos: vGastos, resumen: vResumen, facturas: vFacturas, legal: vLegal, viaje: vViaje, config: vConfig, conceptos: vConceptos })[tab](v);
   pintarAvatar();
   main.focus({ preventScroll: true });
 }
@@ -3249,7 +3276,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '56 (26/11/2026)';
+const APP_VERSION = '57 (27/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
@@ -3731,6 +3758,7 @@ document.addEventListener('click', async e => {
     case 'ant-agregar': { const v = viaje(); anticiposDe(v).push({ id: uid(), fecha: todayISO(), valor: 0, destino: 'empleado', nota: '' }); antQuitando = ''; await guardar(); const y = window.scrollY; render(); window.scrollTo(0, y); const ins = document.querySelectorAll('[data-ant="valor"]'); if (ins.length) { ins[ins.length - 1].focus(); ins[ins.length - 1].select(); } break; }
     case 'ant-quitar': { const v = viaje(), id = t.dataset.id, a = anticiposDe(v).find(x => x.id === id); if (!a) break; if (Number(a.valor) > 0 && antQuitando !== id) { antQuitando = id; } else { v.anticipos = v.anticipos.filter(x => x.id !== id); antQuitando = ''; sincAnticipo(v); await guardar(); toast('Anticipo quitado'); } const y = window.scrollY; render(); window.scrollTo(0, y); break; }
     case 'ant-destino': { const v = viaje(), a = anticiposDe(v).find(x => x.id === t.dataset.id); if (!a) break; a.destino = t.dataset.d; antQuitando = ''; await guardar(); const y = window.scrollY; render(); window.scrollTo(0, y); break; }
+    case 'volver-os': volverAOS(); break;
     case 'adm-modo': ponerModoAdmin(t.dataset.m === 'aprob'); ADM.abierta = ''; render(); window.scrollTo(0, 0); break;
     case 'adm-filtro': ADM.filtro = t.dataset.f; render(); break;
     case 'adm-recargar': admCargar(); break;
@@ -3902,6 +3930,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#sheet'
     const q = new URLSearchParams(location.search), osQ = (q.get('os') || '').trim().replace(/^os\s*/i, '').trim().slice(0, 20);
     if (osQ) {
       const cliQ = (q.get('cliente') || '').trim().slice(0, 60), cotQ = (q.get('cot') || '').trim().slice(0, 30), vv = viaje();
+      try { sessionStorage.setItem('origenOS', osQ); } catch {}
       if (modoAdmin) { modoAdmin = false; render(); } // quien aprueba también puede registrar gastos: entra a sus viáticos
       let otraOS = '';
       if (!esServ(vv)) { // viaje normal: la OS va en la cabecera (solo si está vacía)
@@ -3912,8 +3941,10 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#sheet'
       if (esServ(vv)) { editando.os = osQ; editando.osCliente = cliQ || osClientes()[osQ] || ''; pintarGasto(); } // servicios diarios: la OS va en cada gasto
       if (otraOS) setTimeout(() => toast(`Ojo: este viaje es de la OS ${otraOS}, no de la ${osQ}. Cambie de viaje si corresponde.`, 7000), 400);
       history.replaceState(null, '', location.pathname + location.hash);
+      render();
     }
   } catch (e) { console.error(e); }
+  activarAtrasOS();
   setTimeout(() => revisarFichas(true), 5000);
   setInterval(() => { if (document.visibilityState !== 'visible') return; revisarFichas(); if (modoAdmin && !ADM.cargando && Date.now() - ADM.fecha > 110000) admCargar(); }, 30000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { setTimeout(() => revisarFichas(true), 3000); if (modoAdmin) setTimeout(admCargar, 1000); } });

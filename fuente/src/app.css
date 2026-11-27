@@ -387,3 +387,5 @@ input[readonly] { background: var(--surface-2); color: var(--muted); }
 /* Hoja "¿Qué va a legalizar?": el texto largo hace salto de línea y no ensancha la hoja */
 .tipo-opc, .tipo-opc .item { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
 .tipo-opc .item .t, .tipo-opc .item .s { display: block; width: 100%; min-width: 0; white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; line-height: 1.35; }
+.os-volver { margin: 0 0 8px; }
+.os-volver .btn { width: 100%; font-weight: 700; border-color: var(--accent); color: var(--accent); }
