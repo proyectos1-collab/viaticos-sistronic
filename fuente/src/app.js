@@ -298,9 +298,10 @@ function render() {
   $('#trip-name').textContent = tituloViaje(v);
   $('#trip-sub').textContent = subViaje(v);
   $('#tabs').innerHTML = TABS.map(([k, l, i]) => `<button role="tab" aria-selected="${tab === k}" data-tab="${k}">${i}<span>${l}</span></button>`).join('');
-  $('#fab').hidden = !(tab === 'gastos' || tab === 'facturas');
+  $('#fab').hidden = !(tab === 'gastos' || tab === 'facturas') || viajeBloqueado(v);
   const main = $('#main');
-  main.innerHTML = vVolverOS() + `<div id="sync-chip">${syncChipHTML()}</div>` + (tab === 'config' || tab === 'conceptos' || tab === 'admin' ? '' : vAdmSwitch()) + (tab === 'legal' ? vFaltanDatos(v) : '') + ({ gastos: vGastos, resumen: vResumen, facturas: vFacturas, legal: vLegal, viaje: vViaje, config: vConfig, conceptos: vConceptos, admin: vAdmin })[tab](v);
+  main.innerHTML = vVolverOS() + `<div id="sync-chip">${syncChipHTML()}</div>` + (tab === 'config' || tab === 'conceptos' || tab === 'admin' ? '' : vAdmSwitch()) + (tab === 'legal' && !viajeBloqueado(v) ? vFaltanDatos(v) : '') + ({ gastos: vGastos, resumen: vResumen, facturas: vFacturas, legal: vLegal, viaje: vViaje, config: vConfig, conceptos: vConceptos, admin: vAdmin })[tab](v);
+  if (tab === 'legal' && viajeBloqueado(v)) main.querySelectorAll('[data-vf]').forEach(x => { x.disabled = true; });
   pintarAvatar();
   main.focus({ preventScroll: true });
 }
@@ -309,7 +310,7 @@ function vGastos(v) {
   const I = indicadores(v);
   const pct = Math.min(100, Math.max(0, I.ejecutado * 100));
   const nDup = gruposDuplicados().filter(gr => gr.some(x => x.v.id === v.id)).length;
-  let h = `${vFaltanDatos(v)}${vRecordatorio()}${nDup ? `<div class="note dup" style="margin-bottom:12px">⛔ <b>${nDup === 1 ? 'Hay una factura registrada más de una vez' : `Hay ${nDup} facturas registradas más de una vez`}</b> en este viaje.<div class="row" style="margin-top:8px"><button class="btn dup-btn" data-act="dup-abrir">Revisar y eliminar repetidas</button></div></div>` : ''}<h2>Control de gastos</h2>
+  let h = `${vAvisoBloqueo(v)}${viajeBloqueado(v) ? '' : vFaltanDatos(v)}${vRecordatorio()}${nDup ? `<div class="note dup" style="margin-bottom:12px">⛔ <b>${nDup === 1 ? 'Hay una factura registrada más de una vez' : `Hay ${nDup} facturas registradas más de una vez`}</b> en este viaje.<div class="row" style="margin-top:8px"><button class="btn dup-btn" data-act="dup-abrir">Revisar y eliminar repetidas</button></div></div>` : ''}<h2>Control de gastos</h2>
   <div class="kpis">
     <div class="kpi hero ${I.saldo < 0 ? 'neg' : ''}"><div><div class="l">Saldo disponible</div><div class="v num">${fmtCOP(I.saldo)}</div></div>
       <div style="text-align:right"><div class="l">Anticipo</div><div class="num" style="font-weight:700">${fmtCOP(I.anticipo)}</div></div>
@@ -366,7 +367,7 @@ function vRevision(v) {
   if (!r) h += `<div class="hint" style="margin:0">Cuando toque <b>Enviar a revisión</b>, el viaje queda marcado como enviado.</div>`;
   if (revDevolviendo) h += `<label class="field"><span>Motivo de la devolución (opcional)</span><textarea id="rev-nota" rows="2" placeholder="Ej.: falta la factura del hotel"></textarea></label>
     <div class="row"><button class="btn danger" data-act="rev-devuelto-ok">Marcar como devuelto</button><button class="btn" data-act="rev-cancelar">Cancelar</button></div>`;
-  else if (r && !r.por && !(r.estado === 'enviado' && driveUltimo && driveUltimo.ficha === 'ok')) h += `<div class="row">${r.estado !== 'aprobado' ? '<button class="btn" data-act="rev-aprobado">✔ Marcar aprobado</button>' : ''}${r.estado !== 'devuelto' ? '<button class="btn" data-act="rev-devuelto">↩ Marcar devuelto</button>' : ''}</div>`;
+  // Solo la decisión del aprobador (panel) cambia el estado: el trabajador no puede marcarla él mismo
   return h + '</div>';
 }
 
@@ -477,7 +478,13 @@ function vistaAbierta(v) {
   return { ...v, gastos: resto, anticipo: cadenaCortes(v).saldoFinal, inicio: sig > v.fin ? v.fin : sig, _final: true };
 }
 const corteDeGasto = g => { if (!g.corte) return null; for (const v of S.viajes) { const c = (v.cortes || []).find(x => x.id === g.corte); if (c) return c; } return null; };
-const bloqueado = g => { const c = corteDeGasto(g); return !!(c && (!c.revision || c.revision.estado !== 'devuelto')); };
+// Legalización enviada (pendiente) o aprobada: el viaje queda bloqueado hasta que el aprobador la devuelva
+const viajeBloqueado = v => !!(v && v.revision && (v.revision.estado === 'enviado' || v.revision.estado === 'aprobado'));
+const viajeDeGasto = g => S.viajes.find(v => v.gastos.some(x => x.id === g.id)) || (g._nuevo ? viaje() : null);
+const bloqueado = g => { const c = corteDeGasto(g); return !!(c && (!c.revision || c.revision.estado !== 'devuelto')) || viajeBloqueado(viajeDeGasto(g)); };
+const txtBloqueo = v => { const r = v.revision; return r.estado === 'aprobado' ? `🔒 Esta legalización fue aprobada el ${fmtFH(r.fecha).slice(0, 10)}. Ya no se puede modificar.` : `🔒 Legalización enviada el ${fmtFH(r.fecha).slice(0, 10)}. No se puede modificar hasta que el aprobador la devuelva.`; };
+const msgBloqueo = g => { const v = viajeDeGasto(g); return viajeBloqueado(v) ? (v.revision.estado === 'aprobado' ? 'La legalización ya fue aprobada: no se puede modificar' : 'La legalización está enviada: no se puede modificar hasta que la devuelvan') : 'Este gasto está en un corte enviado'; };
+const vAvisoBloqueo = v => viajeBloqueado(v) ? `<div class="note bloqueo-aviso no-print">${txtBloqueo(v)}</div>` : '';
 const estadoCorteTxt = c => c.revision && REV[c.revision.estado] ? REV[c.revision.estado][0] : 'Sin enviar';
 function sugerirRango(v) {
   const cs = cortesDe(v), ult = cs[cs.length - 1];
@@ -500,11 +507,9 @@ function vCortes(v) {
       ${r && r.nota ? `<div class="note" style="margin-top:6px">${r.estado === 'devuelto' ? '↩ ' : '📝 '}${esc(r.nota)}</div>` : ''}
       ${corteDevolviendo === c.id ? `<label class="field"><span>Motivo de la devolución (opcional)</span><textarea id="corte-nota" rows="2"></textarea></label><div class="row"><button class="btn danger" data-act="corte-dev-ok" data-corte="${c.id}">Marcar devuelto</button><button class="btn" data-act="corte-dev-no">Cancelar</button></div>`
       : `<div class="row" style="margin-top:6px">
-        <button class="btn" data-act="corte-enviar" data-corte="${c.id}" ${driveSubiendo ? 'disabled' : ''}>${r ? 'Reenviar' : 'Enviar a revisión'}</button>
+        ${!r || r.estado === 'devuelto' ? `<button class="btn" data-act="corte-enviar" data-corte="${c.id}" ${driveSubiendo ? 'disabled' : ''}>${r ? 'Reenviar' : 'Enviar a revisión'}</button>` : ''}
         <button class="btn" data-act="corte-xlsx" data-corte="${c.id}">Excel</button>
-        ${r && r.estado !== 'aprobado' ? `<button class="btn" data-act="corte-aprobar" data-corte="${c.id}">✔ Aprobado</button>` : ''}
-        ${r && r.estado !== 'devuelto' ? `<button class="btn" data-act="corte-devolver" data-corte="${c.id}">↩ Devuelto</button>` : ''}
-        ${c === cs[cs.length - 1] && !(r && r.estado === 'aprobado') ? `<button class="btn" data-act="corte-deshacer" data-corte="${c.id}">Deshacer corte</button>` : ''}
+        ${c === cs[cs.length - 1] && (!r || r.estado === 'devuelto') && !viajeBloqueado(v) ? `<button class="btn" data-act="corte-deshacer" data-corte="${c.id}">Deshacer corte</button>` : ''}
       </div>`}
       ${r && r.estado === 'devuelto' ? '<div class="hint">Los gastos de este corte se pueden corregir. Luego toque <b>Reenviar</b>.</div>' : ''}
     </div>`;
@@ -518,7 +523,7 @@ function vCortes(v) {
       <div class="note ${enRango.length ? 'ok' : ''}">${enRango.length ? `Entran <b>${enRango.length} gastos</b> por <b>${fmtCOP(sum(enRango, g => g.valor))}</b> (empleado: ${fmtCOP(empleadoTotal(enRango))}).` : 'No hay gastos sin cortar en esas fechas.'}${fuera ? `<br>⚠ Hay ${fuera} gasto(s) sin cortar con fecha anterior a "Desde"; amplíe el rango para incluirlos.` : ''}</div>
       <div class="row"><button class="btn primary" data-act="corte-crear" ${enRango.length && !driveSubiendo ? '' : 'disabled'}>Enviar corte a revisión</button><button class="btn" data-act="corte-cancelar">Cancelar</button></div>
       <p class="hint" style="margin:0">Los gastos del corte quedan bloqueados. Si se lo devuelven, podrá corregirlos y reenviarlo.</p></div>`;
-  } else h += `<div class="row"><button class="btn" data-act="corte-nuevo">✂ Hacer corte de mes</button></div>`;
+  } else if (!viajeBloqueado(v)) h += `<div class="row"><button class="btn" data-act="corte-nuevo">✂ Hacer corte de mes</button></div>`;
   if (cs.length) h += `<div class="row"><button class="btn" data-act="cortes-resumen">Excel resumen de cortes</button></div>`;
   if (cs.length) h += `<p class="hint" style="margin:0">Los gastos nuevos van al siguiente corte. Al terminar el proyecto, use <b>Enviar legalización final</b> (abajo): lo que falte se envía como el último corte, junto con un Excel de resumen con el total de todos los cortes. Todo queda en una sola carpeta del proyecto en Drive.</p>`;
   return h + '</div>';
@@ -661,7 +666,7 @@ function vLegal(v0) {
     </div>
     <div class="note ${L.ok ? 'ok' : ''}">${L.aviso}</div>
     <div class="hint">Agrupa los gastos pagados por el empleado por subconcepto (o concepto si no tiene). ${dif >= 0 ? `Saldo a favor de la empresa: <b>${fmtCOP(dif)}</b>` : `Saldo a favor del colaborador: <b>${fmtCOP(-dif)}</b>`} (anticipo − total viáticos).</div>
-    <div class="row"><button class="btn" data-act="print">Imprimir / Guardar PDF</button><button class="btn" data-act="xlsx">Exportar Excel</button>${enAndroidGoogle() ? `<button class="btn primary" data-act="drive-xlsx" ${driveSubiendo ? 'disabled' : ''}>${hayCortes ? 'Enviar legalización final' : 'Enviar a revisión'}</button>` : ''}</div>${tab === 'legal' ? vDriveEstado() : ''}
+    <div class="row"><button class="btn" data-act="print">Imprimir / Guardar PDF</button><button class="btn" data-act="xlsx">Exportar Excel</button>${enAndroidGoogle() && !viajeBloqueado(v0) ? `<button class="btn primary" data-act="drive-xlsx" ${driveSubiendo ? 'disabled' : ''}>${hayCortes ? 'Enviar legalización final' : v0.revision && v0.revision.estado === 'devuelto' ? 'Reenviar a revisión' : 'Enviar a revisión'}</button>` : ''}</div>${viajeBloqueado(v0) ? `<div class="note" style="margin-top:8px">${txtBloqueo(v0)}</div>` : ''}${tab === 'legal' ? vDriveEstado() : ''}
   </div>
   <div class="no-print" style="margin-bottom:12px">${vRevision(v0)}</div>
   <div class="fo-wrap">${html}</div>`;
@@ -772,11 +777,18 @@ function vOSResumen(v) {
   return `<div class="field"><span>Órdenes de servicio en esta legalización</span><div class="os-res">${R.map(o => `<div><b>${o.os ? 'OS ' + esc(o.os) : 'Sin OS'}</b>${o.cliente ? ' · ' + esc(o.cliente) : ''}<span class="num">${fmtCOP(o.emp + o.sis)}</span></div>`).join('')}</div></div>`;
 }
 function vViaje(v) {
+  if (viajeBloqueado(v)) { // datos y anticipos de solo lectura
+    const h = vViajeBase(v), i = h.indexOf('<h2>Archivos</h2>');
+    return vAvisoBloqueo(v) + h.slice(0, i).replace(/<input /g, '<input disabled ').replace(/<select /g, '<select disabled ').replace(/<button /g, '<button disabled ') + h.slice(i).replace(/<div class="card form" id="danger">[\s\S]*?<\/div>/, '<div class="card form" id="danger"><p class="hint" style="margin:0">Un viaje enviado a aprobación no se puede eliminar.</p></div>');
+  }
+  return vViajeBase(v);
+}
+function vViajeBase(v) {
   const f = (k, l, t = 'text', extra = '') => `<label class="field"><span>${l}</span><input id="vj-${k}" type="${t}" data-vf="${k}" value="${esc(v[k])}" ${extra}></label>`;
   const sv = esServ(v);
   return `<h2>Datos ${sv ? 'de la legalización' : 'del viaje'}</h2>
   <div class="form card">
-    <div class="field"><span>Tipo de legalización</span><div class="seg" role="group"><button type="button" data-act="tipo-viaje" data-v="proyecto" aria-pressed="${!sv}">📁 Proyecto</button><button type="button" data-act="tipo-viaje" data-v="servicios" aria-pressed="${sv}">🧰 Servicios diarios</button></div>
+    <div class="field"><span>Tipo de legalización</span><div class="tipo-fijo">${sv ? '🧰 Servicios diarios' : '📁 Proyecto'}<small>No se puede cambiar después de crear el viaje</small></div>
       ${sv ? '<p class="hint" style="margin:4px 0 0">Varias órdenes de servicio en una sola legalización: cada gasto lleva su OS y su cliente.</p>' : ''}</div>
     ${f('trabajador', 'Trabajador')}
     <div class="grid2">${f('cedula', 'Cédula', 'text', 'inputmode="numeric"')}${f('ciudad', 'Ciudad')}</div>
@@ -1087,6 +1099,7 @@ async function probarIA() {
 let editando = null, fotoTmp = undefined;
 function abrirGasto(id) {
   const v = viaje();
+  if (!id && viajeBloqueado(v)) { toast(txtBloqueo(v).replace('🔒 ', ''), 4000); return; }
   const g = id ? v.gastos.find(x => x.id === id) : null;
   const ult = v.gastos[v.gastos.length - 1];
   editando = g ? { ...g } : { id: uid(), fecha: hoyEnRango(v), concepto: ult?.concepto || 'Transporte', sub: '', proveedor: '', desc: '', valor: '', pagadoPor: 'Empleado', factura: '', soporte: 'Sí', obs: '', foto: false, _nuevo: true };
@@ -1146,10 +1159,11 @@ function pintarGasto(anim) {
       <div class="hint">Estado de legalización: <span class="chip ${chipClass(e)}" id="g-estado">${e || '—'}</span></div>
       <label class="field"><span>Observaciones</span><textarea id="g-obs" rows="2">${esc(g.obs)}</textarea></label>
       <div id="g-dup"></div>
-      ${bloqueado(g) ? `<div class="note">🔒 Este gasto está en el <b>${esc(nombreCorte(corteDeGasto(g)))}</b> (${esc(estadoCorteTxt(corteDeGasto(g)))}). Solo se puede cambiar si el corte se marca como Devuelto.</div>`
+      ${bloqueado(g) ? (viajeBloqueado(viajeDeGasto(g)) ? `<div class="note">${txtBloqueo(viajeDeGasto(g))}</div>` : `<div class="note">🔒 Este gasto está en el <b>${esc(nombreCorte(corteDeGasto(g)))}</b> (${esc(estadoCorteTxt(corteDeGasto(g)))}). Solo se puede cambiar si el aprobador devuelve el corte.</div>`)
       : `<div class="row"><button class="btn primary" type="submit">Guardar</button>${g._nuevo ? '<button class="btn" type="submit" data-otro="1">Guardar y agregar otro</button>' : ''}</div>
       ${g._nuevo ? '' : '<div id="g-del"><button type="button" class="btn danger block" data-act="g-del">Eliminar gasto</button></div>'}`}
     </div></form></div>`;
+  if (bloqueado(g)) $('#g-form').querySelectorAll('input, select, textarea, .form button:not(.x)').forEach(x => { x.disabled = true; });
   if (!anim && pintarGasto._y) $('#g-form').scrollTop = pintarGasto._y;
   if (fotoTmp) { const im = $('#g-foto-prev'); im.src = fotoTmp; im.hidden = false; }
   if (g._nuevo && anim && !iaLista()) setTimeout(() => $('#g-valor')?.focus(), 50);
@@ -1292,7 +1306,7 @@ let dupOtro = false;
 async function guardarGasto(otro, forzar) {
   leerFormGasto();
   const g = editando;
-  if (bloqueado(g)) { toast('Este gasto está en un corte enviado'); return; }
+  if (bloqueado(g)) { toast(msgBloqueo(g)); return; }
   if (!g.corte) { const k = cortesDe(viaje()).find(c => g.fecha && g.fecha >= c.desde && g.fecha <= c.hasta && (!c.revision || c.revision.estado !== 'devuelto')); if (k && g._nuevo) toast(`Ojo: la fecha cae en el ${nombreCorte(k)}, ya enviado. Este gasto irá al siguiente corte.`); }
   if (g.valor === '' || g.valor <= 0) { toast('Escriba el valor del gasto'); $('#g-valor').focus(); return; }
   if (!g.fecha) { toast('Elija la fecha'); return; }
@@ -2966,7 +2980,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '61 (27/11/2026)';
+const APP_VERSION = '62 (27/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
@@ -3815,16 +3829,16 @@ document.addEventListener('click', async e => {
     case 'firma-limpiar': { const c = $('#firma-canvas'); c.getContext('2d').clearRect(0, 0, c.width, c.height); break; }
     case 'firma-ok': { const f = recortarFirma($('#firma-canvas'), 10); if (!f) { toast('Firme dentro del recuadro'); break; } S.firma = f; await guardar(); cerrarSheet(); render(); toast('Firma guardada'); break; }
     case 'firma-quitar': S.firma = ''; await guardar(); render(); toast('Firma quitada'); break;
-    case 'dup-del': { const id = t.dataset.id, v = S.viajes.find(vv => vv.gastos.some(x => x.id === id)); const g = v && v.gastos.find(x => x.id === id); if (!g) break; if (bloqueado(g)) { toast('Este gasto está en un corte enviado'); break; }
+    case 'dup-del': { const id = t.dataset.id, v = S.viajes.find(vv => vv.gastos.some(x => x.id === id)); const g = v && v.gastos.find(x => x.id === id); if (!g) break; if (bloqueado(g)) { toast(msgBloqueo(g)); break; }
       if (t.dataset.ok !== '1') { t.dataset.ok = '1'; t.textContent = '¿Seguro? Eliminar'; break; }
       v.gastos = v.gastos.filter(x => x.id !== id); await DB.del('foto:' + id); await guardar(); render(); abrirDuplicados(); toast('Gasto repetido eliminado'); break; }
     case 'g-dup-ok': { leerFormGasto(); const d = facturaRepetida(editando); if (d && d.por !== 'valor') { guardarGasto(dupOtro); break; } guardarGasto(dupOtro, true); break; }
-    case 'rev-aprobado': marcarRevision(viaje(), 'aprobado'); await guardar(); render(); toast('Viaje marcado como aprobado'); break;
+    case 'x-desactivado-rev-aprobado': marcarRevision(viaje(), 'aprobado'); await guardar(); render(); toast('Viaje marcado como aprobado'); break;
     case 'rev-devuelto': revDevolviendo = true; render(); setTimeout(() => $('#rev-nota')?.focus(), 50); break;
     case 'rev-cancelar': revDevolviendo = false; render(); break;
     case 'rev-devuelto-ok': { const n = ($('#rev-nota')?.value || '').trim(); revDevolviendo = false; marcarRevision(viaje(), 'devuelto', n); await guardar(); render(); toast('Viaje marcado como devuelto'); break; }
     case 'g-dup-no': $('#g-dup').innerHTML = ''; $('#g-factura')?.focus(); break;
-    case 'g-del-ok': { if (bloqueado(editando)) { toast('Este gasto está en un corte enviado'); break; } const v = viaje(); v.gastos = v.gastos.filter(x => x.id !== editando.id); await DB.del('foto:' + editando.id); await guardar(); cerrarSheet(); render(); toast('Gasto eliminado'); break; }
+    case 'g-del-ok': { if (bloqueado(editando)) { toast(msgBloqueo(editando)); break; } const v = viaje(); v.gastos = v.gastos.filter(x => x.id !== editando.id); await DB.del('foto:' + editando.id); await guardar(); cerrarSheet(); render(); toast('Gasto eliminado'); break; }
     case 'print': imprimir(); break;
     case 'print-go': tab = 'legal'; render(); setTimeout(imprimir, 150); break;
     case 'xlsx': try { await exportarExcel(); } catch (err) { console.error(err); toast('No se pudo exportar: ' + err.message); } break;
@@ -3837,9 +3851,9 @@ document.addEventListener('click', async e => {
     case 'ext-quitar': guardarExternos(listaExt().filter(c => c !== t.dataset.c)); break;
     case 'aprob-agregar': { const c = ($('#aprob-nuevo')?.value || '').trim().toLowerCase(); if (!correoValido(c)) { toast('Escriba un correo válido'); break; } if (c === ADMIN_CORREO || listaAprob().includes(c)) { toast('Ese correo ya aprueba'); break; } guardarAprobadores([...listaAprob(), c]); break; }
     case 'aprob-quitar': guardarAprobadores(listaAprob().filter(c => c !== t.dataset.c)); break;
-    case 'ant-agregar': { const v = viaje(); anticiposDe(v).push({ id: uid(), fecha: todayISO(), valor: 0, destino: 'empleado', nota: '' }); antQuitando = ''; await guardar(); const y = window.scrollY; render(); window.scrollTo(0, y); const ins = document.querySelectorAll('[data-ant="valor"]'); if (ins.length) { ins[ins.length - 1].focus(); ins[ins.length - 1].select(); } break; }
-    case 'ant-quitar': { const v = viaje(), id = t.dataset.id, a = anticiposDe(v).find(x => x.id === id); if (!a) break; if (Number(a.valor) > 0 && antQuitando !== id) { antQuitando = id; } else { v.anticipos = v.anticipos.filter(x => x.id !== id); antQuitando = ''; sincAnticipo(v); await guardar(); toast('Anticipo quitado'); } const y = window.scrollY; render(); window.scrollTo(0, y); break; }
-    case 'ant-destino': { const v = viaje(), a = anticiposDe(v).find(x => x.id === t.dataset.id); if (!a) break; a.destino = t.dataset.d; antQuitando = ''; await guardar(); const y = window.scrollY; render(); window.scrollTo(0, y); break; }
+    case 'ant-agregar': { if (viajeBloqueado(viaje())) { toast('La legalización está enviada: no se puede modificar'); break; } const v = viaje(); anticiposDe(v).push({ id: uid(), fecha: todayISO(), valor: 0, destino: 'empleado', nota: '' }); antQuitando = ''; await guardar(); const y = window.scrollY; render(); window.scrollTo(0, y); const ins = document.querySelectorAll('[data-ant="valor"]'); if (ins.length) { ins[ins.length - 1].focus(); ins[ins.length - 1].select(); } break; }
+    case 'ant-quitar': { if (viajeBloqueado(viaje())) { toast('La legalización está enviada: no se puede modificar'); break; } const v = viaje(), id = t.dataset.id, a = anticiposDe(v).find(x => x.id === id); if (!a) break; if (Number(a.valor) > 0 && antQuitando !== id) { antQuitando = id; } else { v.anticipos = v.anticipos.filter(x => x.id !== id); antQuitando = ''; sincAnticipo(v); await guardar(); toast('Anticipo quitado'); } const y = window.scrollY; render(); window.scrollTo(0, y); break; }
+    case 'ant-destino': { if (viajeBloqueado(viaje())) { toast('La legalización está enviada: no se puede modificar'); break; } const v = viaje(), a = anticiposDe(v).find(x => x.id === t.dataset.id); if (!a) break; a.destino = t.dataset.d; antQuitando = ''; await guardar(); const y = window.scrollY; render(); window.scrollTo(0, y); break; }
     case 'volver-os': volverAOS(); break;
     case 'adm-modo': ponerModoAdmin(t.dataset.m === 'aprob'); ADM.abierta = ''; render(); window.scrollTo(0, 0); break;
     case 'adm-filtro': ADM.filtro = t.dataset.f; render(); break;
@@ -3860,16 +3874,16 @@ document.addEventListener('click', async e => {
     case 'sync-ahora': sincronizar(true); break;
     case 'drive-elegir': abrirCarpetas(); break;
     case 'mail-enviar': enviarAviso(); break;
-    case 'corte-nuevo': corteForm = { ...sugerirRango(viaje()), adicional: 0 }; render(); break;
+    case 'corte-nuevo': if (viajeBloqueado(viaje())) { toast('La legalización está enviada: no se puede modificar'); break; } corteForm = { ...sugerirRango(viaje()), adicional: 0 }; render(); break;
     case 'corte-cancelar': corteForm = null; render(); break;
-    case 'corte-crear': crearCorte(); break;
+    case 'corte-crear': if (viajeBloqueado(viaje())) { toast('La legalización está enviada: no se puede modificar'); break; } crearCorte(); break;
     case 'corte-enviar': subirDrive('corte', t.dataset.corte); break;
     case 'corte-xlsx': { const v = viaje(), k = cortesDe(v).find(x => x.id === t.dataset.corte); try { await exportarExcel(false, vistaCorte(v, k)); } catch (err) { toast('No se pudo exportar: ' + err.message); } break; }
-    case 'corte-aprobar': { const k = cortesDe(viaje()).find(x => x.id === t.dataset.corte); k.revision = { estado: 'aprobado', nota: '', fecha: new Date().toISOString() }; await guardar(); render(); toast(nombreCorte(k) + ' aprobado'); break; }
+    case 'x-desactivado-corte-aprobar': { const k = cortesDe(viaje()).find(x => x.id === t.dataset.corte); k.revision = { estado: 'aprobado', nota: '', fecha: new Date().toISOString() }; await guardar(); render(); toast(nombreCorte(k) + ' aprobado'); break; }
     case 'corte-devolver': corteDevolviendo = t.dataset.corte; render(); setTimeout(() => $('#corte-nota')?.focus(), 50); break;
     case 'corte-dev-no': corteDevolviendo = null; render(); break;
-    case 'corte-dev-ok': { const k = cortesDe(viaje()).find(x => x.id === t.dataset.corte); k.revision = { estado: 'devuelto', nota: ($('#corte-nota')?.value || '').trim(), fecha: new Date().toISOString() }; corteDevolviendo = null; await guardar(); render(); toast(nombreCorte(k) + ' devuelto: ya puede corregir sus gastos'); break; }
-    case 'corte-deshacer': {
+    case 'x-desactivado-corte-dev-ok': { const k = cortesDe(viaje()).find(x => x.id === t.dataset.corte); k.revision = { estado: 'devuelto', nota: ($('#corte-nota')?.value || '').trim(), fecha: new Date().toISOString() }; corteDevolviendo = null; await guardar(); render(); toast(nombreCorte(k) + ' devuelto: ya puede corregir sus gastos'); break; }
+    case 'corte-deshacer': { if (viajeBloqueado(viaje())) { toast('La legalización está enviada: no se puede modificar'); break; }
       if (!t.dataset.ok) { t.dataset.ok = '1'; t.textContent = '¿Seguro? Toque otra vez'; t.classList.add('danger'); break; }
       const v = viaje(), k = cortesDe(v).find(x => x.id === t.dataset.corte); v.gastos.forEach(g => { if (g.corte === k.id) delete g.corte; }); v.cortes = v.cortes.filter(x => x.id !== k.id); await guardar(); render(); toast('Corte deshecho: sus gastos vuelven a quedar abiertos'); break;
     }
@@ -3898,8 +3912,8 @@ document.addEventListener('click', async e => {
         <button class="item" data-act="new-trip-tipo" data-v="servicios"><span class="t">🧰 Servicios diarios</span><span class="s">Varias órdenes de servicio en la misma legalización. Cada gasto lleva su OS y su cliente.</span></button></div></div></div>`; break;
     case 'new-trip-tipo': abrirFormViaje(t.dataset.v === 'servicios' ? 'servicios' : 'proyecto'); break;
     case 'nv-destino': NV.antDestino = t.dataset.d; document.querySelectorAll('[data-act="nv-destino"]').forEach(b => b.setAttribute('aria-pressed', b.dataset.d === NV.antDestino)); break;
-    case 'nv-completar': abrirFormViaje(null, viaje()); break;
-    case 'tipo-viaje': { const v = viaje(), si = t.dataset.v === 'servicios'; if (si === esServ(v)) break; hacerServicios(v, si); await guardar(); render(); toast(si ? 'Ahora es una legalización de servicios diarios' : 'Ahora es una legalización de proyecto'); break; }
+    case 'nv-completar': if (viajeBloqueado(viaje())) { toast('La legalización está enviada: no se puede modificar'); break; } abrirFormViaje(null, viaje()); break;
+    case 'x-desactivado-tipo-viaje': { const v = viaje(), si = t.dataset.v === 'servicios'; if (si === esServ(v)) break; hacerServicios(v, si); await guardar(); render(); toast(si ? 'Ahora es una legalización de servicios diarios' : 'Ahora es una legalización de proyecto'); break; }
     case 'os-chip': { leerFormGasto(); editando.os = t.dataset.os; editando.osCliente = t.dataset.cli || osClientes()[t.dataset.os] || ''; pintarGasto._y = $('#g-form').scrollTop; pintarGasto(); break; }
     case 'vista-gastos': vistaGastos = t.dataset.v; render(); break;
     case 'cp-abrir': if (!cfgAbierta) { cpPendiente = true; abrirConfig(); break; } tab = 'conceptos'; cpBuscar = ''; cpAgregando = null; render(); window.scrollTo(0, 0); break;
@@ -3937,9 +3951,9 @@ document.addEventListener('click', async e => {
     case 'cp-activar-ed': guardarConcepto(true); break;
     case 'cp-eliminar': { const c = cpEdit.orig; if (usoConcepto(c)) break; if (Object.keys(S.listas).length <= 1 && c in S.listas) { toast('Debe quedar al menos un concepto activo'); break; } delete S.listas[c]; if (S.conceptosOff) delete S.conceptosOff[c]; if (S.conceptosCfg) delete S.conceptosCfg[c]; await guardar(); cpEdit = null; cerrarSheet(); render(); toast('Concepto eliminado'); break; }
     case 'reset-listas': S.listas = JSON.parse(JSON.stringify(LISTAS_DEF)); S.conceptosOff = {}; S.conceptosCfg = {}; await guardar(); render(); toast('Lista original restaurada'); break;
-    case 'del-trip': $('#danger').innerHTML = `<div class="note">Se borrará el viaje y sus ${viaje().gastos.length} gastos. No se puede deshacer.</div><div class="row"><button class="btn danger" data-act="del-trip-ok">Sí, eliminar viaje</button><button class="btn" data-act="del-trip-no">Cancelar</button></div>`; break;
+    case 'del-trip': if (viajeBloqueado(viaje())) { toast('Un viaje enviado a aprobación no se puede eliminar'); break; } $('#danger').innerHTML = `<div class="note">Se borrará el viaje y sus ${viaje().gastos.length} gastos. No se puede deshacer.</div><div class="row"><button class="btn danger" data-act="del-trip-ok">Sí, eliminar viaje</button><button class="btn" data-act="del-trip-no">Cancelar</button></div>`; break;
     case 'del-trip-no': render(); break;
-    case 'del-trip-ok': {
+    case 'del-trip-ok': if (viajeBloqueado(viaje())) break; {
       const v = viaje(); for (const g of v.gastos) if (g.foto) await DB.del('foto:' + g.id);
       S.viajes = S.viajes.filter(x => x.id !== v.id);
       if (!S.viajes.length) S.viajes.push(nuevoViaje());
@@ -3953,6 +3967,7 @@ document.addEventListener('input', e => {
   if (el.hasAttribute('data-money')) moneyFormat(el);
   if (el.dataset.nv && NV) { NV[el.dataset.nv] = el.dataset.nv === 'antValor' ? parseValor(el.value) : el.value; nvRevisar(); }
   if (el.dataset.emp && EMPED) EMPED[el.dataset.emp] = el.dataset.emp === 'nit' ? soloDig(el.value) : el.value;
+  if ((el.dataset.ant || el.dataset.vf) && viajeBloqueado(viaje())) return;
   if (el.dataset.ant) {
     const v = viaje(), a = anticiposDe(v).find(x => x.id === el.dataset.id);
     if (a) { a[el.dataset.ant] = el.dataset.ant === 'valor' ? (el.value === '' ? 0 : parseValor(el.value)) : el.value; sincAnticipo(v); guardar(); const t = $('#ant-tot'); if (t) t.innerHTML = vAntTot(v); }
@@ -4039,6 +4054,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#sheet'
       try { sessionStorage.setItem('origenOS', osQ); } catch {}
       if (modoAdmin) { modoAdmin = false; render(); } // quien aprueba también puede registrar gastos: entra a sus viáticos
       let otraOS = '';
+      if (viajeBloqueado(vv)) { history.replaceState(null, '', location.pathname + location.hash); setTimeout(() => toast('Este viaje ya se envió a aprobación: cree un viaje nuevo para la OS ' + osQ, 6000), 400); throw 0; }
       if (!esServ(vv)) { // viaje normal: la OS va en la cabecera (solo si está vacía)
         if (vv.os && vv.os.trim().replace(/^os\s*/i, '').trim().toLowerCase() !== osQ.toLowerCase()) otraOS = vv.os.trim();
         if (!vv.os) vv.os = osQ; if (!vv.cliente && cliQ) vv.cliente = cliQ; if (!vv.cot && cotQ) vv.cot = cotQ; guardar(); render();

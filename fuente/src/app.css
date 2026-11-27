@@ -431,3 +431,8 @@ input[readonly] { background: var(--surface-2); color: var(--muted); }
 .g-viaje b { color: var(--fg); }
 .note.falta-datos { margin-bottom: 12px; }
 #nv-form .ant-box { margin-top: 4px; }
+/* Bloqueo (v62) */
+.tipo-fijo { padding: 10px 12px; border-radius: 10px; background: var(--surface-2); font-weight: 700; }
+.tipo-fijo small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.note.bloqueo-aviso { margin-bottom: 12px; background: var(--surface-2); color: var(--fg); border: 1px solid var(--line); }
+input:disabled, select:disabled { opacity: .7; }
