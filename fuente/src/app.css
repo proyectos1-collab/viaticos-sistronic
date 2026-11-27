@@ -448,3 +448,12 @@ input:disabled, select:disabled { opacity: .7; }
 .item .ant-de { color: var(--green); white-space: normal; }
 .fo-mov { margin-top: 8px; font-size: 12px; padding: 8px 10px; border: 1px dashed var(--line); border-radius: 8px; }
 .ant-tras.recibido b.num { color: var(--green); }
+
+/* v64: Drive en vivo */
+.vivo { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; padding: 8px 12px; border-radius: var(--radius); border: 1px solid var(--line); background: var(--surface); margin-bottom: 10px; }
+.vivo > span:not(.spin) { flex: 1; min-width: 160px; }
+.vivo.ok { border-color: #b7dfc4; background: #effaf2; color: #155c2e; }
+.vivo.pend { border-color: #f1d79a; background: #fff9ea; color: #6b4e00; }
+.vivo.err { border-color: #f2b8b5; background: #fdeeed; color: #8c1d18; }
+.vivo .vivo-btn { padding: 4px 10px; min-height: 0; font-size: 12px; }
+@media (prefers-color-scheme: dark) { .vivo.ok { background: #12301d; color: #a8e2bb; border-color: #245a36; } .vivo.pend { background: #33290d; color: #f1d79a; border-color: #5c4a14; } .vivo.err { background: #3a1513; color: #f2b8b5; border-color: #6b2622; } }

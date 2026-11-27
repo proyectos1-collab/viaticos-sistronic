@@ -1,4 +1,4 @@
-const CACHE = 'viaticos-v63';
+const CACHE = 'viaticos-v64';
 const FILES = ['./vendor/jszip.min.js', './vendor/plantilla.xlsx', './', './index.html', './manifest.webmanifest', './vendor/xlsx.full.min.js', './vendor/pdf.min.mjs', './vendor/pdf.worker.min.mjs', './icons/icon-192.png', './icons/icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });

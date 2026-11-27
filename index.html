@@ -460,6 +460,15 @@ input:disabled, select:disabled { opacity: .7; }
 .fo-mov { margin-top: 8px; font-size: 12px; padding: 8px 10px; border: 1px dashed var(--line); border-radius: 8px; }
 .ant-tras.recibido b.num { color: var(--green); }
 
+/* v64: Drive en vivo */
+.vivo { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; padding: 8px 12px; border-radius: var(--radius); border: 1px solid var(--line); background: var(--surface); margin-bottom: 10px; }
+.vivo > span:not(.spin) { flex: 1; min-width: 160px; }
+.vivo.ok { border-color: #b7dfc4; background: #effaf2; color: #155c2e; }
+.vivo.pend { border-color: #f1d79a; background: #fff9ea; color: #6b4e00; }
+.vivo.err { border-color: #f2b8b5; background: #fdeeed; color: #8c1d18; }
+.vivo .vivo-btn { padding: 4px 10px; min-height: 0; font-size: 12px; }
+@media (prefers-color-scheme: dark) { .vivo.ok { background: #12301d; color: #a8e2bb; border-color: #245a36; } .vivo.pend { background: #33290d; color: #f1d79a; border-color: #5c4a14; } .vivo.err { background: #3a1513; color: #f2b8b5; border-color: #6b2622; } }
+
 :root{padding-top:env(safe-area-inset-top,0px)}
 [hidden]{display:none!important}
 </style>
@@ -666,6 +675,7 @@ async function guardarYa() {
   try { recalcAnticipos(); } catch (e) { console.error(e); }
   await DB.set('state', S);
   try { await sellar(); if (sellar.cambio) programarSync(); } catch (e) { console.error(e); }
+  try { const va = viaje(); programarVivo(va && !va.driveVivo && vivoCandidato(va) ? 4000 : VIVO_MS); } catch (e) { console.error(e); }
   rs.forEach(r => r());
 }
 const viaje = () => S.viajes.find(v => v.id === S.activo) || S.viajes[0];
@@ -829,7 +839,7 @@ function vGastos(v) {
   const I = indicadores(v);
   const pct = Math.min(100, Math.max(0, I.ejecutado * 100));
   const nDup = gruposDuplicados().filter(gr => gr.some(x => x.v.id === v.id)).length;
-  let h = `${vTotalGeneral()}${vAvisoBloqueo(v)}${viajeBloqueado(v) ? '' : vFaltanDatos(v)}${vRecordatorio()}${nDup ? `<div class="note dup" style="margin-bottom:12px">⛔ <b>${nDup === 1 ? 'Hay una factura registrada más de una vez' : `Hay ${nDup} facturas registradas más de una vez`}</b> en este viaje.<div class="row" style="margin-top:8px"><button class="btn dup-btn" data-act="dup-abrir">Revisar y eliminar repetidas</button></div></div>` : ''}<h2>Control de gastos</h2>
+  let h = `<div id="vivo-chip" class="no-print">${vivoChipHTML(v)}</div>${vTotalGeneral()}${vAvisoBloqueo(v)}${viajeBloqueado(v) ? '' : vFaltanDatos(v)}${vRecordatorio()}${nDup ? `<div class="note dup" style="margin-bottom:12px">⛔ <b>${nDup === 1 ? 'Hay una factura registrada más de una vez' : `Hay ${nDup} facturas registradas más de una vez`}</b> en este viaje.<div class="row" style="margin-top:8px"><button class="btn dup-btn" data-act="dup-abrir">Revisar y eliminar repetidas</button></div></div>` : ''}<h2>Control de gastos</h2>
   <div class="kpis">
     <div class="kpi hero ${I.saldo < 0 ? 'neg' : ''}"><div><div class="l">Saldo disponible</div><div class="v num">${fmtCOP(I.saldo)}</div></div>
       <div style="text-align:right"><div class="l">Anticipo</div><div class="num" style="font-weight:700">${fmtCOP(I.anticipo)}</div></div>
@@ -1164,6 +1174,7 @@ async function enviarFinalCortes() {
     if (k) { archivos.push(await subir(await exportarExcel(true, vistaCorte(v, k)))); k.revision = { estado: 'enviado', nota: '', fecha: new Date().toISOString() }; }
     marcarRevision(v, 'enviado'); await guardar();
     const res = await subir(await excelResumenCortes(v, true)); archivos.push(res);
+    if (vivoActivo()) { try { await vivoRetirar(v); await guardar(); } catch (e) { console.error(e); } }
     driveSubiendo = false; driveUltimo = { estado: 'ok', link: res.link, ruta: res.ruta, nombre: archivos.map(a => a.nombre).join(' y '), carpetaLink: res.carpetaLink, tipo: 'xlsx', ctx: { ...driveCtx }, archivos };
     toast('Legalización final enviada a revisión');
     publicarFicha(driveUltimo);
@@ -2681,7 +2692,7 @@ const GW = {
       const c = google.accounts.oauth2.initTokenClient({
         client_id: GOOGLE_CLIENT_ID, scope: G_SCOPES, include_granted_scopes: true,
         callback: r => {
-          if (r && r.access_token) { this.tok = r.access_token; this.exp = Date.now() + (Number(r.expires_in) || 3600) * 1000; try { localStorage.setItem('g:tok', JSON.stringify([this.tok, this.exp])); } catch {} res(this.tok); setTimeout(() => window.programarSync && programarSync(800), 0); }
+          if (r && r.access_token) { this.tok = r.access_token; this.exp = Date.now() + (Number(r.expires_in) || 3600) * 1000; try { localStorage.setItem('g:tok', JSON.stringify([this.tok, this.exp])); } catch {} res(this.tok); setTimeout(() => { window.programarSync && programarSync(800); window.programarVivo && programarVivo(5000); }, 0); }
           else rej(new Error(r && r.error === 'access_denied' ? 'Inicio de sesión cancelado.' : 'Google no entregó el permiso (' + ((r && r.error) || 'sin respuesta') + ').'));
         },
         error_callback: e => rej(new Error(e && e.type === 'popup_closed' ? 'Inicio de sesión cancelado.' : e && e.type === 'popup_failed_to_open' ? 'El navegador bloqueó la ventana de Google. Toque el botón otra vez.' : 'No se pudo abrir el inicio de sesión de Google.'))
@@ -3123,9 +3134,19 @@ async function subirDrive(tipo, corteId) {
   driveSubiendo = true; pdfSubidos = []; driveTipo = tipo === 'corte' ? 'xlsx' : tipo; driveViaje = S.activo; driveCtx = { tipo, viajeId: S.activo, corteId: corte ? corte.id : '' }; correoEstado = null; driveUltimo = { estado: 'subiendo' }; render();
   try {
     const vx = corte ? vistaCorte(v0, corte) : vistaAbierta(v0);
+    if (tipo === 'xlsx' && !corte && vivoActivo()) { // mismo archivo que se ve en Drive: se pone al día y se envía ese
+      driveUltimo = { estado: 'subiendo', txt: 'Actualizando el archivo en Drive…' }; render();
+      await correrVivo(v0.id, true);
+      const dv = v0.driveVivo || {};
+      if (dv.xlsxId) {
+        pdfSubidos = dv.pdfId ? [{ nombre: dv.pdfNombre, link: dv.pdfLink, id: dv.pdfId, corteId: '' }] : [];
+        window.onDriveOk(dv.xlsxLink || '', vivoRuta(v0), dv.xlsxNombre, 'https://drive.google.com/drive/folders/' + dv.carpetaId, dv.xlsxId);
+        return;
+      }
+    }
     const { blob, nombre } = tipo === 'backup' ? await copiaSeguridad(true) : await exportarExcel(true, vx);
     const v = v0, c = driveCfg();
-    const base = c.porViaje ? carpetaProyecto(v) : '';
+    const base = carpetaProyecto(v); // siempre en la carpeta del proyecto (la misma que se actualiza en vivo)
     const sub = tipo === 'backup' ? 'Copias de seguridad' : cortesDe(v0).length ? carpetaProyecto(v0) : base;
     if (tipo !== 'backup') await subirFacturasPDF(vx, c.carpetaId ? c.carpetaNombre || 'Carpeta compartida' : c.carpeta || 'Viáticos Sistronic', c.carpetaId || '', sub, t => { driveUltimo = { estado: 'subiendo', txt: t }; render(); });
     driveUltimo = { estado: 'subiendo' }; render();
@@ -3182,6 +3203,154 @@ function vDriveEstado() {
   }
   return `<div class="note">⚠ ${esc(d.msg)}</div>`;
 }
+/* ---------- Drive en vivo: cada viaje tiene UNA carpeta y UN Excel en Drive que se reemplaza solo con cada cambio ----------
+   Se guardan los ids (v.driveVivo) y siempre se actualiza por id: si cambian los datos, se renombra (no se crean carpetas nuevas).
+   El PDF de facturas solo se rehace cuando cambian las fotos. Sin internet o sin sesión, queda pendiente. */
+const VIVO_MS = 45000, JSON_CT = 'application/json; charset=UTF-8', XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+let vivoTimer = null, vivoCorriendo = null, vivoOtra = false;
+const VIVO = {}; // estado en pantalla por viaje: { estado: 'subiendo' | 'ok' | 'error', msg }
+const vivoActivo = () => !!(window.Android && Android.web && Android.getEmail && Android.getEmail() && !inIframe);
+const vivoLS = (id, val) => { const k = 'vivo:' + id; return val === undefined ? (() => { try { return JSON.parse(GW.ls(k) || 'null') || {}; } catch { return {}; } })() : GW.ls(k, JSON.stringify(val)); };
+const vivoCandidato = v => !viajeBloqueado(v) && (!!v.driveVivo || v.id === S.activo);
+function firmaVivo(v) {
+  const { driveVivo, ...r } = v; let mov = []; try { mov = movimientosAnt(v); } catch {}
+  const { logo, ...emp } = empresaCfg(); return hashStr(JSON.stringify([r, mov, emp, String(logo || '').length, carpetaProyecto(v)]));
+}
+const firmaPDFVivo = v => hashStr(JSON.stringify(vistaAbierta(v).gastos.filter(g => g.foto).map(g => [g.id, g.fotoV, g.valor, g.proveedor, g.razon, g.concepto, g.fecha, g.detalle])));
+const vivoPendiente = v => { const st = vivoLS(v.id); return !v.driveVivo || st.firma !== firmaVivo(v) || st.pdf !== firmaPDFVivo(v); };
+// Espera a que paren los cambios (ms), pero nunca más de 90 s desde el primer cambio; los avisos cortos (viaje nuevo) no se corren
+let vivoLimite = 0, vivoPrimero = 0, vivoCorto = false;
+function programarVivo(ms = VIVO_MS) {
+  if (!S || !vivoActivo()) return;
+  const ahora = Date.now(); if (!vivoTimer) { vivoPrimero = ahora; vivoCorto = false; }
+  let t = ahora + ms; if (vivoTimer && (vivoCorto || ms <= 5000)) t = Math.min(t, vivoLimite); t = Math.min(t, vivoPrimero + 90000);
+  vivoCorto = vivoCorto || ms <= 5000;
+  clearTimeout(vivoTimer); vivoLimite = t; vivoTimer = setTimeout(() => { vivoTimer = null; correrVivo(); }, Math.max(0, t - ahora));
+}
+async function vivoRaiz() { const c = driveCfg(); return c.carpetaId ? (await GW.verificar(c.carpetaId)).id : GW.carpeta(c.carpeta || 'Viáticos Sistronic', 'root'); }
+const vivoRuta = v => { const c = driveCfg(); return (c.carpetaId ? c.carpetaNombre || 'Carpeta compartida' : c.carpeta || 'Viáticos Sistronic') + ' / ' + carpetaProyecto(v); };
+async function vivoGet(id, campos) { if (!id) return null; try { const f = await GW.api('GET', `${DRIVE}/${id}?supportsAllDrives=true&fields=${campos}`); return f.trashed ? null : f; } catch (e) { if (e.status === 404) return null; throw e; } }
+async function hijosDe(id, extra = '') { return (await GW.api('GET', `${DRIVE}?${GW.TODAS}&pageSize=100&fields=files(id,name)&q=${encodeURIComponent(`'${id}' in parents and trashed = false${extra}`)}`)).files || []; }
+const aPapelera = id => GW.api('PATCH', `${DRIVE}/${id}?supportsAllDrives=true&fields=id`, JSON.stringify({ trashed: true }), JSON_CT).catch(() => {});
+// Carpeta del viaje: la misma de siempre; si cambió el nombre del proyecto, se renombra
+async function vivoCarpeta(v, dv, raiz) {
+  const nom = carpetaProyecto(v), car = await vivoGet(dv.carpetaId, 'id,name,trashed');
+  if (!car) return GW.carpeta(nom, raiz);
+  if (car.name === nom) return car.id;
+  const otro = S.viajes.some(x => x !== v && x.driveVivo && x.driveVivo.carpetaId === car.id);
+  const ya = await hijosDe(raiz, ` and name = '${GW.q(nom)}' and mimeType = 'application/vnd.google-apps.folder'`);
+  if (!otro && !ya.length) {
+    await GW.api('PATCH', `${DRIVE}/${car.id}?supportsAllDrives=true&fields=id`, JSON.stringify({ name: nom }), JSON_CT);
+    GW.ls('folder:' + raiz + ':' + car.name, null); GW.ls('folder:' + raiz + ':' + nom, car.id); return car.id;
+  }
+  // Ya existe una carpeta con el nombre nuevo (u otro viaje usa esta): se mueven los archivos de este viaje
+  const nuevo = ya.length ? ya[0].id : await GW.carpeta(nom, raiz);
+  for (const id of [dv.xlsxId, dv.pdfId].filter(Boolean)) await GW.api('PATCH', `${DRIVE}/${id}?addParents=${nuevo}&removeParents=${car.id}&supportsAllDrives=true&fields=id`, '{}', JSON_CT).catch(() => {});
+  if (!otro && !(await hijosDe(car.id)).length) { await aPapelera(car.id); GW.ls('folder:' + raiz + ':' + car.name, null); }
+  return nuevo;
+}
+// Nombre que no choque con un archivo de otro (p. ej. una legalización vieja aprobada con el mismo nombre)
+async function nombreLibre(carpeta, nombre, propio) {
+  const m = nombre.match(/^(.*?)(\.[^.]+)$/) || [nombre, nombre, ''];
+  for (let i = 1; i < 20; i++) {
+    const n = i === 1 ? nombre : `${m[1]} (${i})${m[2]}`;
+    if (!(await hijosDe(carpeta, ` and name = '${GW.q(n)}'`)).some(f => f.id !== propio)) return n;
+  }
+  return nombre;
+}
+// Sube o reemplaza un archivo por id (mismo archivo y mismo enlace). Si no existe, lo crea.
+async function subirPorId(bytes, nombre, mime, carpeta, id) {
+  const restr = (fid, ro) => GW.api('PATCH', `${DRIVE}/${fid}?supportsAllDrives=true&fields=id`, JSON.stringify({ contentRestrictions: [ro ? { readOnly: true, reason: 'Archivo actualizado por la app Viáticos Sistronic. No modificar.' } : { readOnly: false }] }), JSON_CT).catch(() => {});
+  const b = 'viaticos' + Date.now(), cuerpo = meta => new Blob([`--${b}\r\nContent-Type: ${JSON_CT}\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: ${mime}\r\n\r\n`, bytes, `\r\n--${b}--`]);
+  let res;
+  if (id) { await restr(id, false); res = await GW.api('PATCH', `https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=multipart&supportsAllDrives=true&fields=id,webViewLink`, cuerpo({ name: nombre }), 'multipart/related; boundary=' + b); }
+  else res = await GW.api('POST', 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,webViewLink', cuerpo({ name: nombre, parents: [carpeta] }), 'multipart/related; boundary=' + b);
+  await restr(res.id, true);
+  return { id: res.id, link: res.webViewLink || '' };
+}
+// Pone al día la carpeta, el Excel y el PDF de un viaje. Devuelve true si cambió v.driveVivo.
+async function vivoViaje(v, forzar) {
+  const st = vivoLS(v.id), fx = firmaVivo(v), fp = firmaPDFVivo(v);
+  if (!forzar && v.driveVivo && st.firma === fx && st.pdf === fp) return false;
+  VIVO[v.id] = { estado: 'subiendo' }; pintarVivo();
+  const raiz = await vivoRaiz(), antes = JSON.stringify(v.driveVivo || null);
+  const dv = v.driveVivo && v.driveVivo.raiz === raiz ? { ...v.driveVivo } : { raiz };
+  dv.carpetaId = await vivoCarpeta(v, dv, raiz);
+  const vx = vistaAbierta(v), vacio = cortesDe(v).length && !vx.gastos.length;
+  // Excel: siempre el mismo archivo
+  let fx0 = dv.xlsxId ? await vivoGet(dv.xlsxId, 'id,name,trashed') : null;
+  if (vacio) { if (fx0) await aPapelera(fx0.id); delete dv.xlsxId; delete dv.xlsxNombre; delete dv.xlsxLink; }
+  else if (forzar || st.firma !== fx || !fx0) {
+    const { blob, nombre } = await exportarExcel(true, vx);
+    if (!fx0 && !dv.xlsxId && v.revision) { // viaje enviado antes de esta versión: se toma el archivo que ya subió
+      const f = (await hijosDe(dv.carpetaId, ` and name = '${GW.q(nombre)}'`)).find(f => !S.viajes.some(x => x.driveVivo && x.driveVivo.xlsxId === f.id));
+      if (f) fx0 = f;
+    }
+    const n = fx0 && dv.xlsxBase === nombre ? fx0.name : await nombreLibre(dv.carpetaId, nombre, fx0 && fx0.id);
+    const r = await subirPorId(await zipCrcFix(new Uint8Array(await blob.arrayBuffer())), n, XLSX_MIME, dv.carpetaId, fx0 && fx0.id);
+    Object.assign(dv, { xlsxId: r.id, xlsxNombre: n, xlsxBase: nombre, xlsxLink: r.link || dv.xlsxLink || '' });
+  }
+  // PDF de facturas: solo si cambiaron las fotos (o el nombre del viaje)
+  const conFotos = vx.gastos.some(g => g.foto), nomP = nombreFacturasPDF(vx);
+  let fp0 = dv.pdfId ? await vivoGet(dv.pdfId, 'id,name,trashed') : null;
+  if (!conFotos || vacio) { if (fp0) await aPapelera(fp0.id); delete dv.pdfId; delete dv.pdfNombre; delete dv.pdfLink; delete dv.pdfBase; }
+  else if (st.pdf !== fp || !fp0) {
+    VIVO[v.id] = { estado: 'subiendo', msg: 'Armando el PDF de facturas…' }; pintarVivo();
+    const { bytes } = await pdfFacturas(vx, vx.gastos);
+    const n = fp0 && dv.pdfBase === nomP ? fp0.name : await nombreLibre(dv.carpetaId, nomP, fp0 && fp0.id);
+    const r = await subirPorId(bytes, n, 'application/pdf', dv.carpetaId, fp0 && fp0.id);
+    Object.assign(dv, { pdfId: r.id, pdfNombre: n, pdfBase: nomP, pdfLink: r.link || dv.pdfLink || '' });
+  } else if (dv.pdfBase !== nomP) { // solo cambió el nombre del viaje
+    const n = await nombreLibre(dv.carpetaId, nomP, fp0.id);
+    await GW.api('PATCH', `${DRIVE}/${fp0.id}?supportsAllDrives=true&fields=id`, JSON.stringify({ name: n }), JSON_CT);
+    Object.assign(dv, { pdfNombre: n, pdfBase: nomP });
+  }
+  vivoLS(v.id, { firma: fx, pdf: fp, fecha: Date.now() });
+  VIVO[v.id] = { estado: 'ok' };
+  v.driveVivo = dv;
+  return JSON.stringify(dv) !== antes;
+}
+// Revisa todos los viajes con cambios. Uno a la vez.
+async function correrVivo(soloId, forzar) {
+  if (!S || !vivoActivo()) return;
+  if (vivoCorriendo) { if (soloId) { await vivoCorriendo.catch(() => {}); return correrVivo(soloId, forzar); } vivoOtra = true; return; }
+  if (!navigator.onLine || !GW.valido()) { pintarVivo(); if (!soloId) programarVivo(60000); if (soloId) throw new Error(!navigator.onLine ? 'No hay internet.' : 'La sesión de Google venció. Toque el botón otra vez.'); return; }
+  let error = null;
+  vivoCorriendo = (async () => {
+    let cambio = false;
+    for (const v of S.viajes.filter(x => soloId ? x.id === soloId : vivoCandidato(x))) {
+      try { if (await vivoViaje(v, forzar)) cambio = true; }
+      catch (e) { console.error(e); VIVO[v.id] = { estado: 'error', msg: e.message || 'No se pudo actualizar Drive' }; error = e; }
+    }
+    if (cambio) await guardar();
+  })();
+  try { await vivoCorriendo; } finally {
+    vivoCorriendo = null; pintarVivo();
+    if (error && !soloId) programarVivo(120000);
+    if (vivoOtra) { vivoOtra = false; programarVivo(3000); }
+  }
+  if (soloId && error) throw error;
+}
+// Al enviar a revisión con cortes: lo pendiente quedó dentro del último corte, se retira el archivo "Pendiente por cortar"
+async function vivoRetirar(v) {
+  const dv = v.driveVivo; if (!dv) return;
+  for (const id of [dv.xlsxId, dv.pdfId].filter(Boolean)) await aPapelera(id);
+  delete dv.xlsxId; delete dv.xlsxNombre; delete dv.xlsxLink; delete dv.xlsxBase; delete dv.pdfId; delete dv.pdfNombre; delete dv.pdfLink; delete dv.pdfBase;
+}
+function vivoChipHTML(v) {
+  if (!vivoActivo() || !v) return '';
+  const st = vivoLS(v.id), e = VIVO[v.id] || {}, dv = v.driveVivo, hora = st.fecha ? new Date(st.fecha).toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' }) : '';
+  const abrir = dv && dv.carpetaId ? `<button type="button" class="btn vivo-btn" data-act="vivo-abrir">Abrir carpeta</button>` : '';
+  if (viajeBloqueado(v)) return dv ? `<div class="vivo ok">☁ <span>En Drive: <b>${esc(vivoRuta(v))}</b></span>${abrir}</div>` : '';
+  if (e.estado === 'subiendo') return `<div class="vivo"><span class="spin"></span> <span>${esc(e.msg || 'Actualizando Drive…')}</span></div>`;
+  if (e.estado === 'error') return `<div class="vivo err">⚠ <span>Drive no se actualizó: ${esc(e.msg)}</span><button type="button" class="btn vivo-btn" data-act="vivo-ahora">Reintentar</button></div>`;
+  if (vivoPendiente(v)) {
+    const por = !navigator.onLine ? ' (sin internet, se sube al volver)' : !GW.valido() ? '' : ' (se sube en un momento)';
+    return `<div class="vivo pend">☁ <span>Cambios pendientes de subir a Drive${por}</span>${navigator.onLine ? `<button type="button" class="btn vivo-btn" data-act="vivo-ahora">${GW.valido() ? 'Subir ya' : 'Conectar'}</button>` : ''}</div>`;
+  }
+  return `<div class="vivo ok">☁ <span>Drive al día · ${esc(hora)}</span>${abrir}</div>`;
+}
+function pintarVivo() { const el = document.getElementById('vivo-chip'); if (el && S) el.innerHTML = vivoChipHTML(viaje()); }
 /* ---------- Panel de aprobación (administración) ----------
    Al enviar a revisión, la app del trabajador crea en SU Drive una "ficha" (JSON) con el resumen de la legalización
    y la comparte con quienes aprueban (sin correo de Google). El aprobador ve las fichas, aprueba o devuelve, y la
@@ -3502,7 +3671,7 @@ async function sha256(t) {
   if (window.crypto && crypto.subtle) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   throw new Error('Este dispositivo no puede verificar la clave');
 }
-const APP_VERSION = '63 (27/11/2026)';
+const APP_VERSION = '64 (27/11/2026)';
 function abrirConfig() {
   if (cfgAbierta) { tab = 'config'; render(); window.scrollTo(0, 0); return; }
   $('#sheet').innerHTML = `<div class="sheet-back" data-close="1"><form class="sheet anim" id="cfg-form" autocomplete="off">
@@ -3573,7 +3742,7 @@ function vConfig() {
       <div class="row"><button class="btn" data-act="drive-elegir">Cambiar carpeta</button><button class="btn" data-act="drive-propia">Usar una carpeta de mi Drive</button></div>`
     : `<label class="field"><span>Carpeta en mi Google Drive</span><input id="dr-carpeta" value="${esc(c.carpeta)}"></label>
       <button class="btn block" data-act="drive-elegir">📁 Elegir una carpeta que me compartieron</button>`}
-    <label class="row" style="align-items:center;gap:10px;flex-wrap:nowrap"><input id="dr-porviaje" type="checkbox" ${c.porViaje ? 'checked' : ''} style="width:22px;height:22px;flex:0 0 22px;min-width:0"> <span style="flex:1">Crear una carpeta por proyecto (ej. "COT 12-3 Cliente - Proyecto")</span></label>
+    <p class="hint" style="margin:0">☁ Cada proyecto o servicio tiene su propia carpeta (ej. "COT 12-3 Cliente - Proyecto") con un solo Excel que se actualiza solo cada vez que cambia algo. Si cambian los datos del viaje, la carpeta se renombra.</p>
     <div class="row"><button class="btn primary" data-act="drive-xlsx" ${driveSubiendo ? 'disabled' : ''}>Subir Excel a Drive</button><button class="btn" data-act="drive-backup" ${driveSubiendo ? 'disabled' : ''}>Copia de seguridad a Drive</button></div>
     ${vDriveEstado()}
     <p class="hint" style="margin:0">Si el archivo ya existe en esa carpeta, se reemplaza por la versión nueva. Para subir a una carpeta compartida, la persona que la compartió debe darle permiso de Editor.</p>
@@ -4389,6 +4558,8 @@ document.addEventListener('click', async e => {
     case 'adm-devolver-ok': { const nota = ($('#adm-nota')?.value || '').trim(); if (!nota) { toast('Escriba el motivo para que el trabajador sepa qué corregir'); break; } admDecidir('devuelto', nota); break; }
     case 'adm-cancelar': ADM.devolviendo = false; render(); break;
     case 'ficha-reintentar': if (driveUltimo) publicarFicha(driveUltimo); break;
+    case 'vivo-abrir': { const dv = viaje().driveVivo; if (dv && dv.carpetaId) Android.openUrl('https://drive.google.com/drive/folders/' + dv.carpetaId); break; }
+    case 'vivo-ahora': { const id = viaje().id; (GW.valido() ? Promise.resolve() : GW.pedir()).then(() => correrVivo(id)).catch(e => { toast(e.message || 'No se pudo conectar con Google'); pintarVivo(); }); pintarVivo(); break; }
     case 'drive-abrir': if (driveUltimo && driveUltimo.link) Android.openUrl(driveUltimo.link); break;
     case 'login': loginEstado = { cargando: true, msg: '', config: false }; pintarLogin(); Android.login(); break;
     case 'login-saltar': { const el = $('#login'); if (el) el.remove(); toast('Configure el acceso a Google para activar el inicio de sesión'); break; }
@@ -4593,6 +4764,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#sheet'
   activarAtrasOS();
   setTimeout(() => revisarFichas(true), 5000);
   setTimeout(() => { if (enAndroidGoogle() && GW.valido()) carpetaSistema().catch(() => {}); }, 7000);
+  setTimeout(() => programarVivo(1000), 12000);
   setTimeout(() => publicarResumen(), 9000); setInterval(() => { if (document.visibilityState === 'visible') publicarResumen(); }, 120000);
   setInterval(() => { if (document.visibilityState !== 'visible') return; revisarFichas(); if (modoAdmin && !ADM.cargando && Date.now() - ADM.fecha > 110000) admCargar(); }, 30000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { setTimeout(() => revisarFichas(true), 3000); if (modoAdmin) setTimeout(admCargar, 1000); } });
@@ -4600,7 +4772,8 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#sheet'
   setTimeout(revisarIA, 6000); setInterval(revisarIA, 60000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') setTimeout(revisarIA, 2500); });
   limpiarEjemplo().then(c => { if (c) render(); }).catch(() => {}).then(() => metaSync()).then(() => sellar()).then(() => programarSync(1200)).catch(e => console.error(e));
-  window.addEventListener('online', () => programarSync(500));
+  window.addEventListener('online', () => { programarSync(500); programarVivo(3000); pintarVivo(); });
+  window.addEventListener('offline', () => pintarVivo());
   window.addEventListener('offline', () => { if (syncActivo()) { syncEstado = { ...syncEstado, estado: 'offline' }; pintarSyncChip(); } });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') programarSync(500); else if (syncActivo() && SM && SM.pendiente) guardarYa(); });
   setInterval(() => { if (document.visibilityState === 'visible' && !syncCorriendo) sincronizar(false); }, 90000);
